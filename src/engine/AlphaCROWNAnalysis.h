@@ -24,7 +24,7 @@ class TorchModel;
 
 // Structure to hold alpha parameters for a single layer and start
 struct AlphaParameters {
-    torch::Tensor alpha;        // Shape: [spec_dim, 1, num_unstable] - only unstable neurons
+    torch::Tensor alpha;        // Shape: [2, spec_dim, 1, num_unstable] - only unstable neurons
     torch::Tensor unstableMask; // Shape: [outDim] - bool mask indicating unstable neurons
     torch::Tensor unstableIndices; // Shape: [num_unstable] - indices of unstable neurons
     int specDim{0};             // Number of specifications being verified
@@ -44,11 +44,9 @@ public:
     
     void initializeAlphaParameters();
 
-    torch::Tensor getAlphaForNode(unsigned nodeIndex, bool isLowerBound, unsigned specIndex = 0, unsigned batchIndex = 0) const;
-
     // Result structure for getAlphaForNodeAllSpecs
     struct AlphaResult {
-        torch::Tensor alpha;          // [spec, numUnstable] - alpha values for unstable neurons only
+        torch::Tensor alpha;          // [2, spec, 1, numUnstable] - alpha values for unstable neurons only
         torch::Tensor unstableMask;   // [outDim] - bool mask of unstable neurons
         torch::Tensor unstableIndices;// [numUnstable] - indices of unstable neurons
         int numUnstable{0};           // Number of unstable neurons
@@ -57,21 +55,18 @@ public:
     };
 
     // Fetch alpha slice for ALL specs at once for a specific start.
-    // Returns AlphaResult with alpha [spec, numUnstable] and mapping info
+    // Returns AlphaResult with alpha [2, spec, numUnstable] and mapping info
     AlphaResult getAlphaForNodeAllSpecs(
         unsigned nodeIndex,
-        bool isLower,
         const std::string& startKey,
         int specDim,
         int outDim,
         const torch::Tensor& input_lb,
         const torch::Tensor& input_ub);
-    
+
     void setOptimizationStage(const std::string& stage);
 
     std::string getOptimizationStage() const { return _optimizationStage; }
-    
-    bool hasAlphaParameters(unsigned nodeIndex) const;
     
     unsigned getNumOptimizableNodes() const;
     
@@ -85,19 +80,6 @@ public:
     CROWNAnalysis* getCROWNAnalysis() const;
     TorchModel* getTorchModel() const;
 
-    torch::Tensor getAllAlphaParameters() const;
-
-    // Bounds access methods
-    std::pair<torch::Tensor, torch::Tensor> getAllCROWNBounds() const;
-    std::pair<torch::Tensor, torch::Tensor> getCROWNBoundsForLayer(unsigned nodeIndex) const;
-    std::pair<torch::Tensor, torch::Tensor> getAllConcreteBounds() const;
-    std::pair<torch::Tensor, torch::Tensor> getConcreteBoundsForLayer(unsigned nodeIndex) const;
-    
-    // Alpha parameter access methods
-    std::unordered_map<unsigned, AlphaParameters> getAllAlphaParametersByLayer() const;
-    AlphaParameters getAlphaParametersForLayer(unsigned nodeIndex) const;
-    std::vector<torch::Tensor> getAllAlphaTensors() const;
-
     // NEW REFACTORED ENTRY METHOD - Returns optimized bounds for specified side
     // This method handles the complete optimization loop internally
     torch::Tensor computeOptimizedBounds(LunaConfiguration::BoundSide side);
@@ -109,25 +91,11 @@ public:
     // Check if intermediate bounds are available for reuse
     bool hasIntermediateBoundsForReuse() const { return _reuseIntermediateBounds; }
 
-    /* DEPRECATED - OLD IMPLEMENTATIONS
-    std::pair<torch::Tensor, torch::Tensor> computeBoundsWithAlpha(BoundSide side);
-
-    std::pair<torch::Tensor, torch::Tensor> run();
-
-    std::pair<torch::Tensor, torch::Tensor> run(
-        const torch::Tensor* input,
-        const torch::Tensor* specificationMatrix,
-        bool computeLowerBounds = true,
-        bool computeUpperBounds = true
-    );
-    */
-
 
     void clipAlphaParameters();
 
     // Alpha parameter collection (needed by TorchModel for optimizer creation)
-    std::vector<torch::Tensor> collectAlphaParameters(bool isLower);
-
+    std::vector<torch::Tensor> collectAlphaParameters();
     // Configuration parameters
     bool isAlphaEnabled() const { return _alphaEnabled; }
     void setAlphaEnabled(bool enabled) { _alphaEnabled = enabled; }
@@ -167,15 +135,12 @@ private:
     TorchModel* _torchModel;
     std::unique_ptr<CROWNAnalysis> _crownAnalysis;
 
-    // Alpha parameter storage: separate for lower and upper bounds
+    // Alpha parameter storage (unified, matching auto-LiRPA)
     // nodeIndex -> startKey -> AlphaParameters
+    // Alpha shape: [2, spec, 1, numUnstable] where dim 0 separates lA/uA paths
     std::unordered_map<unsigned,
-        std::unordered_map<std::string, AlphaParameters>> _alphaByNodeStartLower;
-    std::unordered_map<unsigned,
-        std::unordered_map<std::string, AlphaParameters>> _alphaByNodeStartUpper;
+        std::unordered_map<std::string, AlphaParameters>> _alphaByNodeStart;
 
-    // old storage (kept during migration for compatibility)
-    std::unordered_map<unsigned, AlphaParameters> _alphaParameters;
 
     // Optimizable activation nodes
     std::vector<std::pair<unsigned, std::shared_ptr<BoundedAlphaOptimizeNode>>> _optimizableNodes;
@@ -189,19 +154,11 @@ private:
     float _learningRate;        // Learning rate for alpha optimization (default: 0.5)
     std::string _optimizationStage;  // Current optimization stage
 
-    // Best alpha tracking for optimization: separate for lower and upper bounds
+    // Best alpha tracking for optimization (unified, matching auto-LiRPA)
     std::unordered_map<unsigned,
-        std::unordered_map<std::string, AlphaParameters>> _bestAlphaByNodeStartLower;
-    std::unordered_map<unsigned,
-        std::unordered_map<std::string, AlphaParameters>> _bestAlphaByNodeStartUpper;
+        std::unordered_map<std::string, AlphaParameters>> _bestAlphaByNodeStart;
+    
 
-    // Legacy best alpha storage
-    std::unordered_map<unsigned, AlphaParameters> _bestAlphaParameters;
-
-    /* DEPRECATED - Optimizers now managed by TorchModel
-    std::shared_ptr<torch::optim::Optimizer> _optimizerLower;
-    std::shared_ptr<torch::optim::Optimizer> _optimizerUpper;
-    */
 
     // Best bounds tracking for dual optimization
     torch::Tensor _bestLowerBounds;
@@ -218,16 +175,6 @@ private:
     void performForwardPass();
     void prepareOptimizableActivations();
     void performCROWNInitializationPass();
-    void createAlphaParameters();
-    
-    void createAlphaForNode(unsigned nodeIndex,
-                           std::shared_ptr<BoundedAlphaOptimizeNode> optimizableNode,
-                           unsigned outputSize);
-
-    void initializeAlphaWithCROWNSlopes(torch::Tensor& alpha,
-                                       std::shared_ptr<BoundedAlphaOptimizeNode> optimizableNode,
-                                       unsigned nodeIndex);
-
     // Ensure alpha exists for (node, start) pair with correct shape and initialization
     AlphaParameters& ensureAlphaFor(
         unsigned nodeIndex,
@@ -237,10 +184,10 @@ private:
         const torch::Tensor& input_ub);
     
     // Update best alphas for improvements (for specific bound side)
-    void updateBestAlphas(const std::vector<int>& improvedIndices, bool isLower);
+    void updateBestAlphas(const std::vector<int>& improvedIndices);
 
     // Reset alpha to best known values (for specific bound side)
-    void restoreBestAlphas(bool isLower);
+    void restoreBestAlphas();
 
     /* DEPRECATED - Best alpha tracking simplified
     void setupBestAlphaTracking();

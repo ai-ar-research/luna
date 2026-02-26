@@ -511,16 +511,6 @@ torch::Tensor BoundedReLUNode::_computeStandardCROWNLowerBound(const torch::Tens
 
 // Helper method: Get alpha parameters for specific bound type
 // NOTE: This method is deprecated - alpha is now fetched directly in boundBackward at multiply time
-torch::Tensor BoundedReLUNode::getAlphaForBound(bool isLowerBound, int boundType) const
-{
-    (void)boundType;
-    (void)isLowerBound;
-
-    // Alpha is now fetched in boundBackward with proper start context
-    // This method is kept for compatibility but returns empty tensor
-    return torch::Tensor();
-}
-
 // Apply masking for stable/unstable neurons (following auto_LiRPA approach)
 // FIXED: Properly handle unstable-only alpha tensors and shape broadcasting
 void BoundedReLUNode::_maskAlpha(const torch::Tensor& input_lower, const torch::Tensor& input_upper, const torch::Tensor& upper_d, RelaxationResult& result)
@@ -559,16 +549,18 @@ void BoundedReLUNode::_maskAlpha(const torch::Tensor& input_lower, const torch::
         }
 
         // Get alpha result (now returns AlphaResult with unstable-only alpha)
+        // Alpha shape: [2, spec, numUnstable] — dim 0 separates lA/uA paths
         auto alphaResult = _alphaCrownAnalysis->getAlphaForNodeAllSpecs(
-            getNodeIndex(), /*isLower=*/true,
+            getNodeIndex(),
             startKey, specDim, outDim,
             input_lower, input_upper);
 
         if (LunaConfiguration::VERBOSE && alphaResult.alpha.defined()) {
-            printf("[DEBUG _maskAlpha] node=%u, alpha shape=[%lld,%lld], numUnstable=%d, outDim=%d\n",
+            printf("[DEBUG _maskAlpha] node=%u, alpha shape=[%lld,%lld,%lld], numUnstable=%d, outDim=%d\n",
                    getNodeIndex(),
                    alphaResult.alpha.dim() >= 1 ? (long long)alphaResult.alpha.size(0) : 0,
                    alphaResult.alpha.dim() >= 2 ? (long long)alphaResult.alpha.size(1) : 0,
+                   alphaResult.alpha.dim() >= 3 ? (long long)alphaResult.alpha.size(2) : 0,
                    alphaResult.numUnstable, alphaResult.outDim);
         }
 
@@ -580,7 +572,7 @@ void BoundedReLUNode::_maskAlpha(const torch::Tensor& input_lower, const torch::
             // 2. "backward through graph a second time" errors (if we reuse graph nodes)
             // The clone() operation preserves gradient flow - gradients from the clone
             // will flow back to the original alpha parameter during backward().
-            auto alpha_unstable = alphaResult.alpha.clone(); // [spec or spec+1, numUnstable]
+            auto alpha_unstable = alphaResult.alpha.clone(); // [2, spec or spec+1, numUnstable]
 
             // If alpha has a default spec slot, map current spec indices into compact alpha spec indices.
             if (alphaResult.hasSpecDefaultSlot && hasSpecLookup && cachedSparseMode && cachedNodeSize > 0) {
@@ -604,8 +596,9 @@ void BoundedReLUNode::_maskAlpha(const torch::Tensor& input_lower, const torch::
                             ? static_cast<int64_t>(lookup[idx].item<int64_t>())
                             : static_cast<int64_t>(0);
                     }
-                    alpha_unstable = alpha_unstable.index_select(0, idxTensor);
-                    specDim = (int)alpha_unstable.size(0);
+                    // dim 1 is the spec dimension (alpha shape: [2, spec, numUnstable])
+                    alpha_unstable = alpha_unstable.index_select(1, idxTensor);
+                    specDim = (int)alpha_unstable.size(1);
                 }
             }
 
@@ -615,24 +608,34 @@ void BoundedReLUNode::_maskAlpha(const torch::Tensor& input_lower, const torch::
             // errors when tensors are reused across optimization iterations.
             auto options = alpha_unstable.options();
 
-            int alphaSpecDim = (int)(alpha_unstable.defined() ? alpha_unstable.size(0) : specDim);
+            // dim 1 is the spec dimension (alpha shape: [2, spec, numUnstable])
+            int alphaSpecDim = (int)(alpha_unstable.defined() ? alpha_unstable.size(1) : specDim);
             specDim = alphaSpecDim;
 
             // Expand masks to [spec, outDim] for broadcasting
             auto always_active_expanded = always_active_mask.unsqueeze(0).expand({specDim, outDim});
+
+            // Split alpha into lA-path (alpha[0]) and uA-path (alpha[1])
+            // matching auto-LiRPA: lb_lower_d = selected_alpha[0], ub_lower_d = selected_alpha[1]
+            auto alpha_lower_unstable = alpha_unstable[0]; // [specDim, numUnstable]
+            auto alpha_upper_unstable = alpha_unstable[1]; // [specDim, numUnstable]
 
             // Build alpha_full using scatter (non-in-place version returns new tensor)
             // Expand indices from [numUnstable] to [specDim, numUnstable] for scatter
             auto indices = alphaResult.unstableIndices.unsqueeze(0).expand({specDim, alphaResult.numUnstable});
 
             // scatter() returns a new tensor (not in-place like scatter_())
-            // This places alpha_unstable values at the positions specified by indices
-            torch::Tensor alpha_full = torch::zeros({specDim, outDim}, options).scatter(1, indices, alpha_unstable);
+            // Build separate full tensors for lA and uA paths
+            torch::Tensor alpha_lower_full = torch::zeros({specDim, outDim}, options).scatter(1, indices, alpha_lower_unstable);
+            torch::Tensor alpha_upper_full = torch::zeros({specDim, outDim}, options).scatter(1, indices, alpha_upper_unstable);
 
             // Apply always_active mask: set those neurons to 1.0
-            alpha_full = torch::where(always_active_expanded,
+            alpha_lower_full = torch::where(always_active_expanded,
                                       torch::ones({specDim, outDim}, options),
-                                      alpha_full);
+                                      alpha_lower_full);
+            alpha_upper_full = torch::where(always_active_expanded,
+                                      torch::ones({specDim, outDim}, options),
+                                      alpha_upper_full);
 
             // Per-spec "upper" slope for the A<0 branch (secant slope)
             // Apply stable neuron masking (same as standard CROWN path)
@@ -641,15 +644,14 @@ void BoundedReLUNode::_maskAlpha(const torch::Tensor& input_lower, const torch::
             upper_d_masked = torch::where(always_inactive_mask, torch::zeros_like(upper_d_masked), upper_d_masked);
             auto k_upper_spec = upper_d_masked.unsqueeze(0).expand({specDim, outDim}); // [spec, outDim]
 
-            // Write per-spec lower-path choices
-            result.lb_lower_d = alpha_full;       // used when A ≥ 0
-            result.lb_upper_d = k_upper_spec;     // used when A < 0
+            // Write per-spec lower-path choices (alpha[0] for lA path)
+            result.lb_lower_d = alpha_lower_full;  // used when A >= 0
+            result.lb_upper_d = k_upper_spec;      // used when A < 0
 
-            // Write per-spec upper-path choices
-            result.ub_upper_d = k_upper_spec;     // used when A ≥ 0
-            // Match auto_LiRPA: always provide ub_lower_d from alpha slice (we reuse alpha_full)
-            // so upper-path A<0 uses optimized slope.
-            result.ub_lower_d = alpha_full;       // used when A < 0
+            // Write per-spec upper-path choices (alpha[1] for uA path)
+            result.ub_upper_d = k_upper_spec;      // used when A >= 0
+            // Match auto_LiRPA: ub_lower_d = selected_alpha[1] — independent slope for uA path
+            result.ub_lower_d = alpha_upper_full;  // used when A < 0
 
 
             // Biases (shape: [outDim])

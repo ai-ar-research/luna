@@ -78,7 +78,6 @@ private:
     // Helper methods following auto_LiRPA approach
     std::pair<torch::Tensor, torch::Tensor> _reluUpperBound(const torch::Tensor& lb, const torch::Tensor& ub);
     torch::Tensor _computeStandardCROWNLowerBound(const torch::Tensor& input_lower, const torch::Tensor& input_upper);
-    torch::Tensor getAlphaForBound(bool isLowerBound, int boundType) const;
     void _maskAlpha(const torch::Tensor& input_lower, const torch::Tensor& input_upper, const torch::Tensor& upper_d, RelaxationResult& result);
     
     // Helper to maybe unfold patches

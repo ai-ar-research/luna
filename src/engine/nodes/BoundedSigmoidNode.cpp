@@ -456,7 +456,7 @@ BoundedSigmoidNode::RelaxationResult BoundedSigmoidNode::_backwardRelaxation(
         }
 
         auto alphaResult = _alphaCrownAnalysis->getAlphaForNodeAllSpecs(
-            getNodeIndex(), /*isLower=*/true,
+            getNodeIndex(),
             startKey, specDim, outDim, input_lower, input_upper);
 
         if (alphaResult.numUnstable > 0 && alphaResult.alpha.defined() && alphaResult.alpha.numel() > 0) {

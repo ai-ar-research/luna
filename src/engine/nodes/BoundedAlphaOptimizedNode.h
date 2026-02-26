@@ -91,8 +91,6 @@ protected:
         }
     }
 
-    torch::Tensor getAlphaForBound(bool isLowerBound, unsigned specIndex = 0) const;
-    
 private:
     // Utility methods
     void log(const String& message) {

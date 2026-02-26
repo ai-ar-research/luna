@@ -248,3 +248,6 @@ auto_LiRPA/
 
 .claude/
 .cursor/
+
+tllverifybench_problematic_subset.md
+tllverifybench_problematic_subset.csv
