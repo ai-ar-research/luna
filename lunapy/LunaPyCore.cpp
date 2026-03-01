@@ -321,6 +321,7 @@ PYBIND11_MODULE(LirpaPyCore, m) {
         .def_readwrite_static("ALPHA_LR", &LunaConfiguration::ALPHA_LR)
         .def_readwrite_static("OPTIMIZE_LOWER", &LunaConfiguration::OPTIMIZE_LOWER)
         .def_readwrite_static("OPTIMIZE_UPPER", &LunaConfiguration::OPTIMIZE_UPPER)
+        .def_readwrite_static("STABILIZE_INTERMEDIATE_BOUNDS", &LunaConfiguration::STABILIZE_INTERMEDIATE_BOUNDS)
         .def_readwrite_static("USE_CUDA", &LunaConfiguration::USE_CUDA)
         .def_readwrite_static("CUDA_DEVICE_ID", &LunaConfiguration::CUDA_DEVICE_ID)
         .def_static("set_device", [](const std::string& device_str) {

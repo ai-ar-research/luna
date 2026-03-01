@@ -168,6 +168,18 @@ private:
     // Maps nodeIndex -> (best_lower, best_upper) for each layer
     std::unordered_map<unsigned, std::pair<torch::Tensor, torch::Tensor>> _bestIntermediateBounds;
 
+    // Reference bounds for the straight-through estimator (STE) stabilization.
+    // Captures the best-so-far intermediate bounds as detached constants.
+    // During optimization, computed intermediate bounds are clamped to be at least
+    // as tight as these references (value), while gradients flow through the
+    // unclamped computation (straight-through).
+    std::unordered_map<unsigned, std::pair<torch::Tensor, torch::Tensor>> _referenceBounds;
+
+    // Fixed intermediate bounds from the first CROWN-with-alpha pass (pre-loop).
+    // Analogous to auto_LiRPA's fix_interm_bounds: computed once, injected every iteration.
+    // Persists across computeOptimizedBounds() calls (lower/upper).
+    std::unordered_map<unsigned, std::pair<torch::Tensor, torch::Tensor>> _initIntermediateBounds;
+
 
     
     // Initialization phase methods
@@ -189,13 +201,13 @@ private:
     // Reset alpha to best known values (for specific bound side)
     void restoreBestAlphas();
 
-    /* DEPRECATED - Best alpha tracking simplified
-    void setupBestAlphaTracking();
-    */
-
     // Best intermediate bounds tracking (following auto-LiRPA)
     void snapshotBestIntermediateBounds();
     void restoreBestIntermediateBounds();
+
+    // Fixed intermediate bounds (auto_LiRPA fix_interm_bounds=True)
+    void _captureInitIntermediateBounds();
+    void _injectInitIntermediateBounds();
 
     torch::Tensor computeLoss(const torch::Tensor& lowerBounds,
                              const torch::Tensor& upperBounds,

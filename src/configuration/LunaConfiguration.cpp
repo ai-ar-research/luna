@@ -25,6 +25,7 @@ bool LunaConfiguration::KEEP_BEST = true;
 bool LunaConfiguration::USE_SHARED_ALPHA = false;
 unsigned LunaConfiguration::EARLY_STOP_PATIENCE = 10;
 bool LunaConfiguration::FIX_INTERM_BOUNDS = true;
+bool LunaConfiguration::STABILIZE_INTERMEDIATE_BOUNDS = true;
 String LunaConfiguration::OPTIMIZER = "adam";
 float LunaConfiguration::START_SAVE_BEST = 0.5f;
 LunaConfiguration::BoundSide LunaConfiguration::BOUND_SIDE = 
@@ -120,6 +121,7 @@ void LunaConfiguration::resetToDefaults()
     USE_SHARED_ALPHA = false;
     EARLY_STOP_PATIENCE = 10;
     FIX_INTERM_BOUNDS = true;
+    STABILIZE_INTERMEDIATE_BOUNDS = true;
     OPTIMIZER = "adam";
     START_SAVE_BEST = 0.5f;
     BOUND_SIDE = BoundSide::Lower;
@@ -168,6 +170,7 @@ void LunaConfiguration::print()
     printf("  USE_SHARED_ALPHA: %s\n", USE_SHARED_ALPHA ? "true" : "false");
     printf("  EARLY_STOP_PATIENCE: %u\n", EARLY_STOP_PATIENCE);
     printf("  FIX_INTERM_BOUNDS: %s\n", FIX_INTERM_BOUNDS ? "true" : "false");
+    printf("  STABILIZE_INTERMEDIATE_BOUNDS: %s\n", STABILIZE_INTERMEDIATE_BOUNDS ? "true" : "false");
     printf("  OPTIMIZER: %s\n", OPTIMIZER.ascii());
     printf("  START_SAVE_BEST: %.3f\n", START_SAVE_BEST);
     printf("  BOUND_SIDE: %s\n", boundSideToString(BOUND_SIDE).ascii());
@@ -322,6 +325,13 @@ void LunaConfiguration::parseArgs(int argc, char** argv)
         else if (arg == "--disable-first-linear-ibp") {
             ENABLE_FIRST_LINEAR_IBP = false;
         }
+        // Stabilize intermediate bounds (STE)
+        else if (arg == "--stabilize") {
+            STABILIZE_INTERMEDIATE_BOUNDS = true;
+        }
+        else if (arg == "--no-stabilize") {
+            STABILIZE_INTERMEDIATE_BOUNDS = false;
+        }
         // Standard CROWN
         else if (arg == "--standard-crown") {
             USE_STANDARD_CROWN = true;
@@ -348,6 +358,7 @@ void LunaConfiguration::parseArgs(int argc, char** argv)
             printf("  --cuda-device <n>               CUDA device index (default: 0)\n");
             printf("  --optimize-lower / --no-optimize-lower\n");
             printf("  --optimize-upper / --no-optimize-upper\n");
+            printf("  --stabilize / --no-stabilize    STE stabilization for intermediate bounds (default: on)\n");
             printf("  --enable-first-linear-ibp / --disable-first-linear-ibp\n");
             printf("  --standard-crown / --crown-ibp  CROWN mode selection\n");
             printf("  --help                          Print this help message\n");

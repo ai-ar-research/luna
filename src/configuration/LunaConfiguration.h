@@ -38,6 +38,7 @@ public:
     static bool USE_SHARED_ALPHA;
     static unsigned EARLY_STOP_PATIENCE;
     static bool FIX_INTERM_BOUNDS;
+    static bool STABILIZE_INTERMEDIATE_BOUNDS;
     static String OPTIMIZER;
     static float START_SAVE_BEST;
     static BoundSide BOUND_SIDE;

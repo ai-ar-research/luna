@@ -148,15 +148,6 @@ void CROWNAnalysis::run(bool enableGradients)
         bool useStandardCrown = LunaConfiguration::USE_STANDARD_CROWN;
 
         if (useStandardCrown) {
-            // =========================================================================
-            // Standard CROWN with LAZY intermediate bound computation (auto_LiRPA style)
-            // =========================================================================
-            // Instead of multiple backward passes (one per pre-activation), we do:
-            // 1. Compute IBP bounds for all nodes (baseline)
-            // 2. Single backward pass from output
-            // 3. checkPriorBounds() triggers lazy intermediate computation when needed
-            // This matches auto_LiRPA's approach and reduces backward passes from ~8 to ~2
-
             // First, compute IBP bounds as reference
             stage = "computeIBPBounds(standard)";
             computeIBPBounds();
@@ -1096,6 +1087,31 @@ void CROWNAnalysis::concretizeNode(unsigned startIndex, const Vector<unsigned>& 
             }
         }
 
+        // Straight-Through Estimator (STE): clamp intermediate bounds to be at least
+        // as tight as the reference bounds, while preserving gradient flow.
+        // Value: max(ref, computed) for lower, min(ref, computed) for upper
+        // Gradient: d(computed)/d(alpha) — as if clamping didn't happen
+        // This matches auto_LiRPA's bound_general.py:1079-1084
+        if (LunaConfiguration::ANALYSIS_METHOD == LunaConfiguration::AnalysisMethod::AlphaCROWN) {
+            auto refIt = _referenceBounds.find(startIndex);
+            if (refIt != _referenceBounds.end()) {
+                const auto& refLower = refIt->second.first;
+                const auto& refUpper = refIt->second.second;
+
+                if (refLower.defined() && refLower.sizes() == concreteLower.sizes()) {
+                    // lower: value = max(ref, computed), grad = d(computed)/d(alpha)
+                    concreteLower = torch::max(refLower, concreteLower).detach()
+                                    - concreteLower.detach() + concreteLower;
+                }
+                if (refUpper.defined() && refUpper.sizes() == concreteUpper.sizes()) {
+                    // upper: value = min(ref, computed), grad = d(computed)/d(alpha)
+                    concreteUpper = concreteUpper
+                                    - (concreteUpper.detach()
+                                       - torch::min(refUpper, concreteUpper).detach());
+                }
+            }
+        }
+
         // Intersecting with IBP bounds can make results UNSOUND if IBP bounds are incorrect
         // (e.g., due to shape/layout mismatches). For debugging/correctness, disable this.
         const bool kIntersectWithIBP = false;
@@ -1701,6 +1717,17 @@ void CROWNAnalysis::clearAllNodeBounds()
             node->clearBounds();
         }
     }
+}
+
+void CROWNAnalysis::setReferenceBounds(
+    const std::unordered_map<unsigned, std::pair<torch::Tensor, torch::Tensor>>& ref)
+{
+    _referenceBounds = ref;
+}
+
+void CROWNAnalysis::clearReferenceBounds()
+{
+    _referenceBounds.clear();
 }
 
 void CROWNAnalysis::markProcessed(unsigned nodeIndex)

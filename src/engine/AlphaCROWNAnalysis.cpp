@@ -382,14 +382,65 @@ torch::Tensor AlphaCROWNAnalysis::computeOptimizedBounds(LunaConfiguration::Boun
 
     snapshotBestIntermediateBounds();
 
+    // Capture reference bounds for straight-through estimator (STE) stabilization.
+    // These are the initial intermediate bounds; they'll be tightened monotonically
+    // as the optimizer finds improvements.
+    if (LunaConfiguration::STABILIZE_INTERMEDIATE_BOUNDS) {
+        _referenceBounds.clear();
+        for (const auto& [nodeIdx, bounds] : _bestIntermediateBounds) {
+            _referenceBounds[nodeIdx] = {bounds.first.detach().clone(), bounds.second.detach().clone()};
+        }
+        _crownAnalysis->setReferenceBounds(_referenceBounds);
+    }
+
     // Only extract the bound we need (minor optimization that doesn't affect tightness)
     torch::Tensor initialBound = isLower ? extractLowerBoundsFromCROWN() : extractUpperBoundsFromCROWN();
+
+    // === DEBUG: initial bounds before optimization loop ===
+    {
+        printf("[Luna PRE-OPT %s] initial_bounds: [", isLower ? "LOWER" : "UPPER");
+        auto ib_acc = initialBound.detach().contiguous().cpu();
+        auto ib_ptr = ib_acc.data_ptr<float>();
+        int64_t ib_numel = ib_acc.numel();
+        for (int64_t bi = 0; bi < ib_numel; ++bi) {
+            printf("%.6f%s", ib_ptr[bi], bi < ib_numel - 1 ? ", " : "");
+        }
+        printf("]\n");
+    }
+    // === END DEBUG ===
 
     auto alphaParams = collectAlphaParameters();
     if (alphaParams.empty()) {
         _crownAnalysis->run(false);
         return isLower ? extractLowerBoundsFromCROWN() : extractUpperBoundsFromCROWN();
     }
+
+    // === DEBUG: initial alpha values before optimization ===
+    {
+        float init_a0_sum = 0.0f, init_a1_sum = 0.0f;
+        int init_a_count = 0;
+        int64_t init_a_numel = 0;
+        for (auto& [nodeIdx, perStart] : _alphaByNodeStart) {
+            for (auto& [startKey, ap] : perStart) {
+                if (ap.alpha.defined()) {
+                    init_a0_sum += ap.alpha[0].sum().item<float>();
+                    init_a1_sum += ap.alpha[1].sum().item<float>();
+                    init_a_numel += ap.alpha[0].numel() + ap.alpha[1].numel();
+                    init_a_count++;
+                    // Per-node breakdown
+                    auto shape = ap.alpha.sizes();
+                    printf("  [Luna ALPHA node=%u start=%s] shape=[%lld,%lld,%lld,%lld] numUnstable=%d outDim=%d sum[0]=%.4f sum[1]=%.4f\n",
+                           nodeIdx, startKey.c_str(),
+                           (long long)shape[0], (long long)shape[1], (long long)shape[2], (long long)shape[3],
+                           ap.numUnstable, ap.outDim,
+                           ap.alpha[0].sum().item<float>(), ap.alpha[1].sum().item<float>());
+                }
+            }
+        }
+        printf("[Luna INIT-ALPHA %s] sum[0]=%.6f sum[1]=%.6f nodes=%d total_numel=%lld\n",
+               isLower ? "LOWER" : "UPPER", init_a0_sum, init_a1_sum, init_a_count, (long long)init_a_numel);
+    }
+    // === END DEBUG ===
 
     auto optimizer = std::make_shared<torch::optim::Adam>(
         alphaParams,
@@ -424,7 +475,10 @@ torch::Tensor AlphaCROWNAnalysis::computeOptimizedBounds(LunaConfiguration::Boun
                            : computeLoss(torch::Tensor(), currentBound, isLower);
         }
 
+        // Track best bounds (always) and compute improved indices
         bool improved = false;
+        std::vector<int> improvedIndices;
+
         if (!bestBounds.defined()) {
             bestBounds = currentBoundDetached.clone();
             improved = true;
@@ -432,27 +486,38 @@ torch::Tensor AlphaCROWNAnalysis::computeOptimizedBounds(LunaConfiguration::Boun
                 ? 1
                 : (currentBoundDetached.dim() == 1 ? currentBoundDetached.size(0)
                                                    : currentBoundDetached.size(currentBoundDetached.dim() - 1));
-            std::vector<int> allIndices;
-            allIndices.reserve(static_cast<size_t>(specDim));
+            improvedIndices.reserve(static_cast<size_t>(specDim));
             for (int64_t i = 0; i < specDim; ++i) {
-                allIndices.push_back(static_cast<int>(i));
+                improvedIndices.push_back(static_cast<int>(i));
             }
-            updateBestAlphas(allIndices);
         } else {
-            auto improvedIndices = findImprovedIndices(currentBoundDetached, bestBounds, isLower);
+            improvedIndices = findImprovedIndices(currentBoundDetached, bestBounds, isLower);
             improved = !improvedIndices.empty();
             if (improved) {
                 bestBounds = isLower
                     ? torch::max(bestBounds, currentBoundDetached).detach()
                     : torch::min(bestBounds, currentBoundDetached).detach();
-                updateBestAlphas(improvedIndices);
             }
         }
 
-        if (improved) {
-            // FIX: Skip width computation since we only extract one bound now
-            // Width tracking was only for logging and doesn't affect optimization
+        // Gate alpha/intermediate saving: match auto_LiRPA's start_save_best.
+        // Save at iter 0 (in case of divergence), after start_save_best fraction,
+        // or when about to early-stop.
+        bool shouldSaveBest = (iter < 1)
+            || (iter > static_cast<unsigned>(_iteration * LunaConfiguration::START_SAVE_BEST))
+            || (iterations_without_improvement >= early_stop_patience);
+
+        if (improved && shouldSaveBest) {
+            updateBestAlphas(improvedIndices);
             snapshotBestIntermediateBounds();
+
+            // Update STE reference bounds to best-so-far for monotonic tightening
+            if (LunaConfiguration::STABILIZE_INTERMEDIATE_BOUNDS) {
+                for (const auto& [nodeIdx, bounds] : _bestIntermediateBounds) {
+                    _referenceBounds[nodeIdx] = {bounds.first.detach().clone(), bounds.second.detach().clone()};
+                }
+                _crownAnalysis->setReferenceBounds(_referenceBounds);
+            }
         }
 
         float current_loss = loss.defined() ? std::abs(loss.item<float>()) : 0.0f;
@@ -462,6 +527,38 @@ torch::Tensor AlphaCROWNAnalysis::computeOptimizedBounds(LunaConfiguration::Boun
         } else if (loss.defined()) {
             iterations_without_improvement++;
         }
+
+        // === DEBUG: per-iteration comparison prints (always on) ===
+        {
+            float dbg_loss = loss.defined() ? loss.item<float>() : std::numeric_limits<float>::quiet_NaN();
+            printf("[Luna iter=%u %s] loss=%.6f lr=%.6f patience=%u\n",
+                   iter, isLower ? "LOWER" : "UPPER", dbg_loss, currentLR, iterations_without_improvement);
+            // Print current bounds
+            printf("  current_bounds: [");
+            auto cb_acc = currentBoundDetached.contiguous().cpu();
+            auto cb_ptr = cb_acc.data_ptr<float>();
+            int64_t cb_numel = cb_acc.numel();
+            for (int64_t bi = 0; bi < cb_numel; ++bi) {
+                printf("%.6f%s", cb_ptr[bi], bi < cb_numel - 1 ? ", " : "");
+            }
+            printf("]\n");
+            // Print best bounds
+            printf("  best_bounds:    [");
+            if (bestBounds.defined()) {
+                auto bb_acc = bestBounds.contiguous().cpu();
+                auto bb_ptr = bb_acc.data_ptr<float>();
+                int64_t bb_numel = bb_acc.numel();
+                for (int64_t bi = 0; bi < bb_numel; ++bi) {
+                    printf("%.6f%s", bb_ptr[bi], bi < bb_numel - 1 ? ", " : "");
+                }
+            }
+            printf("]\n");
+            printf("  improved=%s shouldSaveBest=%s\n",
+                   improved ? "true" : "false",
+                   shouldSaveBest ? "true" : "false");
+        }
+        // === END DEBUG ===
+
         if (iterations_without_improvement >= early_stop_patience) {
             printf("AlphaCROWNAnalysis: Early stopping invoked at iteration %u/%u (%s) — no improvement for %u iterations\n",
                    iter, _iteration, isLower ? "LOWER" : "UPPER", early_stop_patience);
@@ -475,8 +572,7 @@ torch::Tensor AlphaCROWNAnalysis::computeOptimizedBounds(LunaConfiguration::Boun
             optimizer->zero_grad();
             loss.backward();
 
-            // DEBUG: Print gradient magnitudes for alpha[0] vs alpha[1]
-            {
+            if (LunaConfiguration::VERBOSE) {
                 float grad0_sum = 0.0f, grad1_sum = 0.0f;
                 int grad0_count = 0, grad1_count = 0;
                 float val0_sum = 0.0f, val1_sum = 0.0f;
@@ -484,7 +580,6 @@ torch::Tensor AlphaCROWNAnalysis::computeOptimizedBounds(LunaConfiguration::Boun
                     for (auto& [startKey, ap] : perStart) {
                         if (ap.alpha.defined() && ap.alpha.grad().defined()) {
                             auto g = ap.alpha.grad();
-                            // alpha shape: [2, spec, 1, numUnstable]
                             auto g0 = g[0].abs().sum().item<float>();
                             auto g1 = g[1].abs().sum().item<float>();
                             grad0_sum += g0;
@@ -511,6 +606,29 @@ torch::Tensor AlphaCROWNAnalysis::computeOptimizedBounds(LunaConfiguration::Boun
             optimizer->step();
             clipAlphaParameters();
 
+            // === DEBUG: alpha summary after step+clip ===
+            {
+                float a0_sum = 0.0f, a1_sum = 0.0f;
+                int a_count = 0;
+                float grad0_sum_dbg = 0.0f, grad1_sum_dbg = 0.0f;
+                for (auto& [nodeIdx, perStart] : _alphaByNodeStart) {
+                    for (auto& [startKey, ap] : perStart) {
+                        if (ap.alpha.defined()) {
+                            a0_sum += ap.alpha[0].sum().item<float>();
+                            a1_sum += ap.alpha[1].sum().item<float>();
+                            if (ap.alpha.grad().defined()) {
+                                grad0_sum_dbg += ap.alpha.grad()[0].abs().sum().item<float>();
+                                grad1_sum_dbg += ap.alpha.grad()[1].abs().sum().item<float>();
+                            }
+                            a_count++;
+                        }
+                    }
+                }
+                printf("  alpha_after_step: sum[0]=%.6f sum[1]=%.6f grad_abs_sum[0]=%.6f grad_abs_sum[1]=%.6f nodes=%d\n",
+                       a0_sum, a1_sum, grad0_sum_dbg, grad1_sum_dbg, a_count);
+            }
+            // === END DEBUG ===
+
             currentLR *= LunaConfiguration::ALPHA_LR_DECAY;
             for (auto& group : optimizer->param_groups()) {
                 if (auto adamGroup = dynamic_cast<torch::optim::AdamOptions*>(&group.options())) {
@@ -521,6 +639,7 @@ torch::Tensor AlphaCROWNAnalysis::computeOptimizedBounds(LunaConfiguration::Boun
     }
 
     restoreBestAlphas();
+    _crownAnalysis->clearReferenceBounds();  // STE no longer needed for final run
     _crownAnalysis->clearConcreteBounds();
     restoreBestIntermediateBounds();
     _crownAnalysis->resetProcessingState();
@@ -531,6 +650,19 @@ torch::Tensor AlphaCROWNAnalysis::computeOptimizedBounds(LunaConfiguration::Boun
     if (bestBounds.defined()) {
         finalBound = isLower ? torch::max(finalBound, bestBounds) : torch::min(finalBound, bestBounds);
     }
+
+    // === DEBUG: final bounds ===
+    {
+        printf("[Luna FINAL %s] final_bounds: [", isLower ? "LOWER" : "UPPER");
+        auto fb_acc = finalBound.detach().contiguous().cpu();
+        auto fb_ptr = fb_acc.data_ptr<float>();
+        int64_t fb_numel = fb_acc.numel();
+        for (int64_t bi = 0; bi < fb_numel; ++bi) {
+            printf("%.6f%s", fb_ptr[bi], bi < fb_numel - 1 ? ", " : "");
+        }
+        printf("]\n");
+    }
+    // === END DEBUG ===
 
     log(Stringf("computeOptimizedBounds() - %s bound optimization completed",
                 isLower ? "Lower" : "Upper"));

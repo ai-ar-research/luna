@@ -152,6 +152,12 @@ public:
     // Concretize bounds for a specific node index
     void concretizeNode(unsigned startIndex, const Vector<unsigned>& unstableIndices = {});
 
+    // Reference bounds for straight-through estimator (STE) stabilization.
+    // When set, concretizeNode() clamps computed intermediate bounds to be at least
+    // as tight as these references while preserving gradient flow.
+    void setReferenceBounds(const std::unordered_map<unsigned, std::pair<torch::Tensor, torch::Tensor>>& ref);
+    void clearReferenceBounds();
+
     // Determine which nodes need CROWN bounds (selective computation)
     bool needsCROWNBounds(unsigned nodeIndex);
 
@@ -239,6 +245,10 @@ private:
     // These are snapshots during the backward pass
     Map<unsigned, Pair<BoundA, torch::Tensor>> _intermediateA;       // Lower A and bias
     Map<unsigned, Pair<BoundA, torch::Tensor>> _intermediateAUpper;  // Upper A and bias
+
+    // Reference bounds for STE stabilization (set by AlphaCROWNAnalysis).
+    // Maps nodeIndex -> (lower, upper) detached reference tensors.
+    std::unordered_map<unsigned, std::pair<torch::Tensor, torch::Tensor>> _referenceBounds;
 
 };
 

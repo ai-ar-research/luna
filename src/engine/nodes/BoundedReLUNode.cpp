@@ -526,7 +526,9 @@ void BoundedReLUNode::_maskAlpha(const torch::Tensor& input_lower, const torch::
     // For alpha optimization - alpha is the optimizable slope
     // Apply alpha optimization for ALL backward passes (output AND intermediate)
     // Each backward pass uses alpha keyed by startKey, enabling per-target optimization
-    if (isAlphaOptimizationEnabled() && _alphaCrownAnalysis && _currentSpecDim > 0) {
+    if (isAlphaOptimizationEnabled() && _alphaCrownAnalysis
+        && (_optimizationStage == "opt" || _optimizationStage == "reuse")
+        && _currentSpecDim > 0) {
         auto* crown = _alphaCrownAnalysis->getCROWNAnalysis();
         std::string startKey = crown->currentStartKey();
         if (startKey.empty()) startKey = "default";
