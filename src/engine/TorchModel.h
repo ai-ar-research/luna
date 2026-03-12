@@ -93,6 +93,7 @@ public:
     torch::Tensor getSpecificationThresholds() const;
     CMatrixResult getSpecificationMatrixResult() const;
     bool hasSpecificationMatrix() const;
+    bool isSpecVerified(const torch::Tensor& lb, const torch::Tensor& ub) const;
 
     // UNIFIED ANALYSIS ENTRY METHOD (mirrors auto_LiRPA's compute_bounds)
     // Configuration is read from LunaConfiguration static members
@@ -114,10 +115,6 @@ public:
     BoundedTensor<torch::Tensor> runAlphaCROWN(const BoundedTensor<torch::Tensor>& inputBounds,
                                                 bool optimizeLower = true, bool optimizeUpper = false);
 
-    /* DEPRECATED - OLD ENTRY METHOD
-    BoundedTensor<torch::Tensor> runAlphaCROWN();
-    BoundedTensor<torch::Tensor> runAlphaCROWN(const BoundedTensor<torch::Tensor>& inputBounds);
-    */
 
     // ANALYSIS BOUNDS STORAGE
     void setCROWNBounds(unsigned nodeIndex, const BoundedTensor<torch::Tensor>& bounds);

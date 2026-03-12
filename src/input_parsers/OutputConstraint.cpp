@@ -247,43 +247,39 @@ Vector<BranchResult> OutputConstraintSet::evaluateORBranches(
             continue;
         }
 
-        // Check if branch is verified: all rows have upperBound <= threshold
-        // All constraints are normalized to C*y <= threshold form
-        bool allVerified = true;
+        // Check if branch is disproved: ANY row with lb > threshold breaks
+        // the AND-conjunction of counterexample conditions for this branch.
+        bool branchDisproved = false;
         for (unsigned i = 0; i < branchRows[branchId].size(); ++i)
         {
             unsigned rowIndex = branchRows[branchId][i];
-            
-            // Constraint satisfied if upperBound <= threshold
-            // Equivalent to: upperBound - threshold <= 0
-            float upperDiff = upperBounds[rowIndex].item<float>() - thresholds[rowIndex].item<float>();
 
-            if (upperDiff > 0.0f)
-            {
-                allVerified = false;
-                break;
-            }
-        }
-        branchResult.verified = allVerified;
-
-        // Check if branch is refuted: at least one row has lowerBound > threshold
-        // This means even the best case violates the constraint
-        bool someRefuted = false;
-        for (unsigned i = 0; i < branchRows[branchId].size(); ++i)
-        {
-            unsigned rowIndex = branchRows[branchId][i];
-            
-            // Constraint refuted if lowerBound > threshold
-            // Equivalent to: lowerBound - threshold > 0
             float lowerDiff = lowerBounds[rowIndex].item<float>() - thresholds[rowIndex].item<float>();
 
             if (lowerDiff > 0.0f)
             {
-                someRefuted = true;
+                branchDisproved = true;
                 break;
             }
         }
-        branchResult.refuted = someRefuted;
+        branchResult.verified = branchDisproved;
+
+        // Check if branch counterexample is always satisfiable: ALL rows have
+        // ub <= threshold, meaning every constraint in the AND is always true.
+        bool branchAlwaysSatisfiable = true;
+        for (unsigned i = 0; i < branchRows[branchId].size(); ++i)
+        {
+            unsigned rowIndex = branchRows[branchId][i];
+
+            float upperDiff = upperBounds[rowIndex].item<float>() - thresholds[rowIndex].item<float>();
+
+            if (upperDiff > 0.0f)
+            {
+                branchAlwaysSatisfiable = false;
+                break;
+            }
+        }
+        branchResult.refuted = branchAlwaysSatisfiable;
 
         results.append(branchResult);
     }

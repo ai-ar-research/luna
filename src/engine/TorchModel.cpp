@@ -191,7 +191,8 @@ TorchModel::TorchModel(const String& onnxPath,
                 }
 
                 // Store the specification matrix in the model
-                setSpecificationMatrix(C);
+                //setSpecificationMatrix(C);
+                setSpecificationFromConstraints(outputConstraints);
 
                 log(Stringf("[TorchModel] Successfully set specification matrix with %d constraints", 
                             (int)C.size(0)));
@@ -689,6 +690,7 @@ torch::Tensor TorchModel::getInputUpperBounds() const {
 
 // SPECIFICATION MATRIX MANAGEMENT
 
+
 void TorchModel::setSpecificationMatrix(const torch::Tensor& specMatrix) {
     log(Stringf("[TorchModel] Setting specification matrix with shape [%ld, %ld, %ld]",
                 specMatrix.size(0), specMatrix.size(1), specMatrix.size(2)));
@@ -750,6 +752,42 @@ CMatrixResult TorchModel::getSpecificationMatrixResult() const {
 
 bool TorchModel::hasSpecificationMatrix() const {
     return _hasSpecificationMatrix;
+}
+
+bool TorchModel::isSpecVerified(const torch::Tensor& lb, const torch::Tensor& ub) const
+{
+    if (!_hasSpecificationMatrix || !_specificationThresholds.defined()
+        || _specificationThresholds.numel() == 0) {
+        return false;
+    }
+    if (!lb.defined() || lb.numel() == 0 || !ub.defined() || ub.numel() == 0) {
+        return false;
+    }
+
+    torch::Tensor lb_flat = lb.flatten();
+    torch::Tensor ub_flat = ub.flatten();
+    torch::Tensor thresholds = _specificationThresholds.to(lb_flat.device()).flatten();
+
+    if (lb_flat.numel() != thresholds.numel()) {
+        return false;
+    }
+
+    if (_hasORBranches) {
+        Vector<BranchResult> branchResults =
+            OutputConstraintSet::evaluateORBranches(
+                lb_flat, ub_flat, thresholds,
+                _specificationBranchMapping,
+                _specificationBranchSizes);
+        // OR of counterexample branches: ALL must be disproved for safety
+        for (const auto& branch : branchResults) {
+            if (!branch.verified) return false;
+        }
+        return true;
+    }
+
+    // C @ y <= rhs is the counterexample (AND-conjunction).
+    // ANY constraint with lb > threshold breaks the conjunction → verified.
+    return (lb_flat > thresholds).any().item<bool>();
 }
 
 // Configuration is now accessed via LunaConfiguration static members
@@ -890,6 +928,24 @@ BoundedTensor<torch::Tensor> TorchModel::runAlphaCROWN(const BoundedTensor<torch
 
     // Set input bounds on the internal CROWN analysis
     alphaCrownAnalysis->getCROWNAnalysis()->setInputBounds(inputBounds);
+
+    // Early stop: check if initial CROWN pass already verifies the property
+    if (LunaConfiguration::STOP_CROWN_ON_VERIFIED) {
+        alphaCrownAnalysis->initializeAlphaParameters();
+
+        auto* crown = alphaCrownAnalysis->getCROWNAnalysis();
+        unsigned outIdx = crown->getOutputIndex();
+        if (crown->hasConcreteBounds(outIdx)) {
+            torch::Tensor lb = crown->getConcreteLowerBound(outIdx);
+            torch::Tensor ub = crown->getConcreteUpperBound(outIdx);
+            if (isSpecVerified(lb, ub)) {
+                std::cout << "Verified with initial CROWN!" << std::endl;
+                BoundedTensor<torch::Tensor> result(lb, ub);
+                setFinalAnalysisBounds(result);
+                return result;
+            }
+        }
+    }
 
     // Initialize bound tensors
     torch::Tensor finalLower, finalUpper;

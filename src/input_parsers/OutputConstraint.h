@@ -152,12 +152,15 @@ public:
     unsigned getNumORBranches() const;
 
     /**
-     * Convert all constraints to a C matrix for CROWN backward propagation.
+     * Convert all constraints to a negated C matrix for CROWN backward propagation.
      *
-     * Each constraint is in normalized form C*y <= threshold, and becomes a row in the C matrix.
-     * Examples:
-     *   - Y_0 - Y_1 <= 0.5: C row = [1, -1, 0, ...], threshold = 0.5
-     *   - Y_2 <= 3.0: C row = [0, 0, 1, ...], threshold = 3.0
+     * VNN-LIB constraints are in the form C_orig*y <= d. This method negates both the
+     * coefficients and thresholds to match auto-LiRPA convention: -C_orig*y >= -d.
+     * With this convention, a positive lower bound means the property is satisfied (safe).
+     *
+     * Examples (original constraint → stored C row, threshold):
+     *   - Y_0 - Y_1 <= 0.5: C row = [-1, 1, 0, ...], threshold = -0.5
+     *   - Y_2 <= 3.0: C row = [0, 0, -1, ...], threshold = -3.0
      *
      * When OR branches exist, all constraints from all branches are concatenated into one
      * batched C matrix, and branch mapping information is populated.
@@ -165,17 +168,18 @@ public:
      * The returned C matrix has shape (total_rows, 1, output_dim) to match
      * expected format for batch processing.
      *
-     * @return CMatrixResult containing C matrix, thresholds, and branch metadata
+     * @return CMatrixResult containing negated C matrix, negated thresholds, and branch metadata
      */
     CMatrixResult toCMatrix() const;
 
     /**
      * Evaluate OR branches from batched bounds.
      *
-     * All constraints are in normalized form C*y <= threshold.
+     * All constraints are in negated auto-LiRPA convention: -C*y >= -d.
+     * Bounds and thresholds are both in this negated space.
      * For each branch:
-     *   - Verified: all rows have upperBound <= threshold (i.e., upperBound - threshold <= 0)
-     *   - Refuted: at least one row has lowerBound > threshold (i.e., lowerBound - threshold > 0)
+     *   - Verified: all rows have lowerBound >= threshold (safety margin is non-negative)
+     *   - Refuted: at least one row has upperBound < threshold (even best case fails)
      *
      * @param lowerBounds Lower bounds for each constraint row (shape: total_rows)
      * @param upperBounds Upper bounds for each constraint row (shape: total_rows)

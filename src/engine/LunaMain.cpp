@@ -18,9 +18,11 @@ static void printBounds(const torch::Tensor& lower, const torch::Tensor& upper) 
     if (lb.dim() == 0) lb = lb.unsqueeze(0);
     if (ub.dim() == 0) ub = ub.unsqueeze(0);
 
-    std::cout << "Output Bounds:" << std::endl;
     std::cout << std::fixed << std::setprecision(6);
 
+    /*
+    // Paired format: [lower, upper] per output
+    std::cout << "Output Bounds:" << std::endl;
     for (int i = 0; i < lb.size(0); ++i) {
         if (i > 0) std::cout << " ";
         auto l = lb[i];
@@ -30,6 +32,27 @@ static void printBounds(const torch::Tensor& lower, const torch::Tensor& upper) 
         std::cout << "[" << l.item<double>() << ", " << u.item<double>() << "]";
     }
     std::cout << std::endl;
+    */
+    std::cout << " " << std::endl;
+    // Separate lower/upper lists
+    std::cout << "Lower Bounds: [";
+    for (int i = 0; i < lb.size(0); ++i) {
+        auto l = lb[i];
+        if (l.dim() > 0) l = l.flatten()[0];
+        if (i > 0) std::cout << ", ";
+        std::cout << l.item<double>();
+    }
+    std::cout << "]" << std::endl;
+
+    std::cout << "Upper Bounds: [";
+    for (int i = 0; i < ub.size(0); ++i) {
+        auto u = ub[i];
+        if (u.dim() > 0) u = u.flatten()[0];
+        if (i > 0) std::cout << ", ";
+        std::cout << u.item<double>();
+    }
+    std::cout << "]" << std::endl;
+
     std::cout << std::defaultfloat;
 }
 
@@ -75,41 +98,51 @@ static PropertyStatus evaluatePropertyStatus(
             NLR::OutputConstraintSet::evaluateORBranches(lb, ub, thresholds,
                                                          cMatrix.branchMapping,
                                                          cMatrix.branchSizes);
-        bool anyVerified = false;
-        bool allRefuted = true;
+        // OR of counterexample branches: unsafe if ANY branch is satisfied.
+        // Unsat (safe): ALL branches must be disproved (each branch's AND broken).
+        // Sat (unsafe): ANY branch is always satisfiable.
+        bool allBranchesDisproved = true;
+        bool anyBranchAlwaysSat = false;
 
         for (const auto& branch : branchResults) {
-            if (branch.verified) {
-                anyVerified = true;
+            if (!branch.verified) {
+                allBranchesDisproved = false;
             }
-            if (!branch.refuted) {
-                allRefuted = false;
+            if (branch.refuted) {
+                anyBranchAlwaysSat = true;
             }
         }
 
-        if (anyVerified) {
-            detail = "at least one OR-branch verified (safe)";
+        if (allBranchesDisproved) {
+            detail = "all OR-branches disproved (no counterexample possible)";
             return PropertyStatus::Unsat;
         }
-        if (allRefuted) {
-            detail = "all OR-branches refuted (counterexample exists)";
+        if (anyBranchAlwaysSat) {
+            detail = "at least one OR-branch always satisfiable (counterexample exists)";
             return PropertyStatus::Sat;
         }
         detail = "bounds inconclusive for OR-branches";
         return PropertyStatus::Unknown;
     }
 
-    torch::Tensor upperDiff = ub - thresholds;
+    // C @ y <= rhs is the counterexample condition (AND-conjunction).
+    // If ANY constraint has lb(C_i @ y) > rhs_i, that constraint can never
+    // be satisfied, breaking the AND → no counterexample → safe (unsat).
     torch::Tensor lowerDiff = lb - thresholds;
-    bool allVerified = (upperDiff <= 0).all().item<bool>();
-    bool anyViolated = (lowerDiff > 0).any().item<bool>();
+    bool anyDisproved = (lowerDiff > 0).any().item<bool>();
 
-    if (allVerified) {
-        detail = "all upper bounds <= threshold (property verified)";
+    if (anyDisproved) {
+        detail = "lower bound > threshold for at least one constraint (counterexample conjunction broken)";
         return PropertyStatus::Unsat;
     }
-    if (anyViolated) {
-        detail = "lower bound > threshold (counterexample exists)";
+
+    // If ALL constraints have ub(C_i @ y) <= rhs_i, every constraint is always
+    // satisfiable → counterexample always exists → definitely unsafe (sat).
+    torch::Tensor upperDiff = ub - thresholds;
+    bool allSatisfiable = (upperDiff <= 0).all().item<bool>();
+
+    if (allSatisfiable) {
+        detail = "all upper bounds <= threshold (counterexample always satisfiable)";
         return PropertyStatus::Sat;
     }
 
@@ -223,8 +256,8 @@ int lunaMain(int argc, char* argv[]) {
                       << LunaConfiguration::getDevice().str() << std::endl;
         }
 
-        std::cout << "Parsing ONNX file: " << onnxFilePath << std::endl;
-        std::cout << "Parsing VNN-LIB file: " << vnnlibFilePath << std::endl;
+        std::cout << "Model:    " << onnxFilePath << std::endl;
+        std::cout << "Property: " << vnnlibFilePath << std::endl;
 
         // Step 1: Create TorchModel from ONNX and VNN-LIB files
         std::shared_ptr<NLR::TorchModel> torchModel = std::make_shared<NLR::TorchModel>(
@@ -257,15 +290,13 @@ int lunaMain(int argc, char* argv[]) {
         }
 
         // Step 3: Check if specification matrix was loaded from VNN-LIB file
-        torch::Tensor* specMatrix = nullptr;
-        torch::Tensor C;  // Keep C in wider scope so pointer remains valid
-
+        // Note: Do NOT pass the spec matrix to compute_bounds() — it's already stored
+        // in the model via setSpecificationFromConstraints() (which preserves thresholds).
+        // Passing it again would call setSpecificationMatrix() which clears thresholds
+        // needed for early stopping (isSpecVerified).
         if (torchModel->hasSpecificationMatrix()) {
-            // Get the specification matrix that was automatically parsed from VNN-LIB
-            C = torchModel->getSpecificationMatrix();
-            specMatrix = &C;
-
             if (LunaConfiguration::VERBOSE) {
+                torch::Tensor C = torchModel->getSpecificationMatrix();
                 std::cout << "\nUsing specification matrix from VNN-LIB file with "
                           << C.size(0) << " constraints" << std::endl;
             }
@@ -278,31 +309,32 @@ int lunaMain(int argc, char* argv[]) {
         // Step 4: Run analysis based on configured method
         BoundedTensor<torch::Tensor> result;
 
-        if (LunaConfiguration::ANALYSIS_METHOD == LunaConfiguration::AnalysisMethod::AlphaCROWN) {
-            if (LunaConfiguration::VERBOSE) {
-                std::cout << "\nRunning Alpha-CROWN analysis..." << std::endl;
-                std::cout << "Configuration:" << std::endl;
-                std::cout << "  Method: AlphaCROWN" << std::endl;
-                std::cout << "  Iterations: " << LunaConfiguration::ALPHA_ITERATIONS << std::endl;
-                std::cout << "  Optimize lower: " << (LunaConfiguration::OPTIMIZE_LOWER ? "true" : "false") << std::endl;
-                std::cout << "  Optimize upper: " << (LunaConfiguration::OPTIMIZE_UPPER ? "true" : "false") << std::endl;
+        // Print config summary
+        {
+            std::string method = (LunaConfiguration::ANALYSIS_METHOD == LunaConfiguration::AnalysisMethod::AlphaCROWN)
+                ? "alpha-crown" : "crown";
+            std::cout << "Method:   " << method;
+            if (method == "alpha-crown") {
+                std::cout << " (iters=" << LunaConfiguration::ALPHA_ITERATIONS
+                          << ", lr=" << LunaConfiguration::ALPHA_LR
+                          << ", lr_decay=" << LunaConfiguration::ALPHA_LR_DECAY
+                          << ", patience=" << LunaConfiguration::EARLY_STOP_PATIENCE << ")";
             }
-            
+            std::cout << std::endl;
+        }
+
+        if (LunaConfiguration::ANALYSIS_METHOD == LunaConfiguration::AnalysisMethod::AlphaCROWN) {
             result = torchModel->compute_bounds(
                 inputBounds,
-                specMatrix,  // Specification matrix (or nullptr if no constraints)
+                nullptr,  // Spec already set via setSpecificationFromConstraints
                 LunaConfiguration::AnalysisMethod::AlphaCROWN,
                 LunaConfiguration::COMPUTE_LOWER,
                 LunaConfiguration::COMPUTE_UPPER
             );
         } else {
-            if (LunaConfiguration::VERBOSE) {
-                std::cout << "\nRunning CROWN analysis..." << std::endl;
-            }
-            
             result = torchModel->compute_bounds(
                 inputBounds,
-                specMatrix,  // Specification matrix (or nullptr if no constraints)
+                nullptr,  // Spec already set via setSpecificationFromConstraints
                 LunaConfiguration::AnalysisMethod::CROWN,
                 LunaConfiguration::COMPUTE_LOWER,
                 LunaConfiguration::COMPUTE_UPPER
@@ -349,9 +381,6 @@ int lunaMain(int argc, char* argv[]) {
         }
 
         std::cout << "\nResult: " << statusLabel << std::endl;
-        if (!statusDetail.empty()) {
-            std::cout << "Details: " << statusDetail << std::endl;
-        }
 
         return 0;
 

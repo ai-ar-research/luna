@@ -32,6 +32,9 @@ LunaConfiguration::BoundSide LunaConfiguration::BOUND_SIDE =
     LunaConfiguration::BoundSide::Lower;
 bool LunaConfiguration::OPTIMIZE_LOWER = true;
 bool LunaConfiguration::OPTIMIZE_UPPER = false;
+bool LunaConfiguration::STOP_CROWN_ON_VERIFIED = true;
+bool LunaConfiguration::STOP_ALPHA_ON_VERIFIED = true;
+
 
 // CROWN settings
 bool LunaConfiguration::ENABLE_FIRST_LINEAR_IBP = true;
@@ -127,6 +130,8 @@ void LunaConfiguration::resetToDefaults()
     BOUND_SIDE = BoundSide::Lower;
     OPTIMIZE_LOWER = true;
     OPTIMIZE_UPPER = false;
+    STOP_ALPHA_ON_VERIFIED = true;
+    STOP_CROWN_ON_VERIFIED = true;
 
     // CROWN settings
     ENABLE_FIRST_LINEAR_IBP = true;
@@ -176,7 +181,9 @@ void LunaConfiguration::print()
     printf("  BOUND_SIDE: %s\n", boundSideToString(BOUND_SIDE).ascii());
     printf("  OPTIMIZE_LOWER: %s\n", OPTIMIZE_LOWER ? "true" : "false");
     printf("  OPTIMIZE_UPPER: %s\n", OPTIMIZE_UPPER ? "true" : "false");
-    
+    printf("  STOP_CROWN_ON_VERIFIED: %s\n", STOP_CROWN_ON_VERIFIED ? "true" : "false");
+    printf("  STOP_ALPHA_ON_VERIFIED: %s\n", STOP_ALPHA_ON_VERIFIED ? "true" : "false");
+
     // CROWN settings
     printf("\nCROWN Settings:\n");
     printf("  ENABLE_FIRST_LINEAR_IBP: %s\n", ENABLE_FIRST_LINEAR_IBP ? "true" : "false");
@@ -316,6 +323,22 @@ void LunaConfiguration::parseArgs(int argc, char** argv)
         // No optimize upper
         else if (arg == "--no-optimize-upper") {
             OPTIMIZE_UPPER = false;
+        }
+        // Stop bound computation if spec if verified on init CROWN
+        else if (arg == "--stop-crown-verified") {
+            STOP_CROWN_ON_VERIFIED = true;
+        }
+        // DO NOT stop bound computation if spec if verified on init CROWN
+        else if (arg == "--no-stop-crown-verified") {
+            STOP_CROWN_ON_VERIFIED = false;
+        }
+        // Stop bound computation if spec if verified during alphaCROWN iteration
+        else if (arg == "--stop-alpha-verified") {
+            STOP_ALPHA_ON_VERIFIED = true;
+        }
+        // Stop bound computation if spec if verified on init CROWN
+        else if (arg == "--no-stop-alpha-verified") {
+            STOP_ALPHA_ON_VERIFIED = false;
         }
         // Enable first linear IBP
         else if (arg == "--enable-first-linear-ibp") {

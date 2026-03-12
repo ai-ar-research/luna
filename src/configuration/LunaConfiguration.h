@@ -44,6 +44,8 @@ public:
     static BoundSide BOUND_SIDE;
     static bool OPTIMIZE_LOWER;
     static bool OPTIMIZE_UPPER;
+    static bool STOP_CROWN_ON_VERIFIED;
+    static bool STOP_ALPHA_ON_VERIFIED;
 
     // CROWN settings
     static bool ENABLE_FIRST_LINEAR_IBP;
