@@ -71,20 +71,29 @@ torch::Tensor BoundedAddNode::broadcast_backward(const torch::Tensor& last_A, co
     std::vector<int64_t> target_shape = x.sizes().vec();
 
     // Ensure target has a batch dim matching A when needed.
+    // Bounds tensors in this codebase are stored WITHOUT a batch dimension (just [features]).
+    // When A is 3D [spec, batch, features], the operand should be [batch, features].
+    // We must always prepend a batch dimension when the operand rank is too small for A.
 
-    if (last_A.dim() >= 2) {
-        // For 3D A matrices [spec, batch, features], batch is at dimension 1
-        // For 2D A matrices [spec, features], there's no batch dimension (batch=1 implied)
-        int64_t A_batch = (last_A.dim() >= 3) ? last_A.size(1) : 1;
-        // If operand has no batch dim (e.g., constants), add it.
+    if (last_A.dim() >= 3) {
+        int64_t A_batch = last_A.size(1);
         if ((int64_t)target_shape.size() == 0) {
             target_shape = {A_batch};
-        } else {
-            // Heuristic: if operand batch doesn't match A batch, treat operand as batch-less constant.
-            // This matches auto_LiRPA's x.batch_dim == -1 handling.
-            if (target_shape.size() >= 1 && target_shape[0] != A_batch) {
-                target_shape.insert(target_shape.begin(), A_batch);
-            }
+        }
+        // For 3D A [spec, batch, features], the operand needs at least rank 2 [batch, features].
+        // If operand is rank 1 [features], always prepend batch dimension.
+        // The old heuristic (target_shape[0] != A_batch) fails when A_batch == features.
+        if ((int64_t)target_shape.size() < 2) {
+            target_shape.insert(target_shape.begin(), A_batch);
+        } else if (target_shape.size() >= 1 && target_shape[0] != A_batch) {
+            target_shape.insert(target_shape.begin(), A_batch);
+        }
+    } else if (last_A.dim() == 2) {
+        int64_t A_batch = 1; // 2D A: [spec, features], batch=1 implied
+        if ((int64_t)target_shape.size() == 0) {
+            target_shape = {A_batch};
+        } else if (target_shape.size() >= 1 && target_shape[0] != A_batch) {
+            target_shape.insert(target_shape.begin(), A_batch);
         }
     }
 

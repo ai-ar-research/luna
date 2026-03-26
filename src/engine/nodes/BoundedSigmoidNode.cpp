@@ -475,7 +475,7 @@ BoundedSigmoidNode::RelaxationResult BoundedSigmoidNode::_backwardRelaxation(
             if (alpha_unstable.dim() == 3 && alpha_unstable.size(2) >= 8) {
                 torch::NoGradGuard no_grad;
                 int64_t specAlpha = alpha_unstable.size(0);
-                auto idx = alphaResult.unstableIndices;
+                auto idx = alphaResult.unstableIndices.to(lb_flat.device());
                 auto lb_unstable = lb_flat.index_select(0, idx).unsqueeze(0).expand({specAlpha, alphaResult.numUnstable});
                 auto ub_unstable = ub_flat.index_select(0, idx).unsqueeze(0).expand({specAlpha, alphaResult.numUnstable});
                 auto d_lower_unstable = d_lower_pre_flat.index_select(0, idx).unsqueeze(0).expand({specAlpha, alphaResult.numUnstable});
@@ -528,7 +528,7 @@ BoundedSigmoidNode::RelaxationResult BoundedSigmoidNode::_backwardRelaxation(
             // Build dense alpha [spec, outDim] from unstable-only alpha.
             auto options = alpha_unstable.options();
             specDim = (int)alpha_unstable.size(0);
-            auto indices = alphaResult.unstableIndices.unsqueeze(0).expand({specDim, alphaResult.numUnstable});
+            auto indices = alphaResult.unstableIndices.to(options.device()).unsqueeze(0).expand({specDim, alphaResult.numUnstable});
             auto make_alpha_full = [&](const torch::Tensor& alpha_slice_2d) {
                 return torch::zeros({specDim, outDim}, options).scatter(1, indices, alpha_slice_2d);
             };

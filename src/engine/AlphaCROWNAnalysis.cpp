@@ -269,7 +269,8 @@ AlphaParameters& AlphaCROWNAnalysis::ensureAlphaFor(
         torch::Tensor expanded;
         if (alphaSlots == 1) {
             // Shape: [2, specDimAlpha, 1, numUnstable] — dim 0 separates lA/uA paths
-            alpha = torch::zeros({2, specDimAlpha, 1, numUnstable}, options.dtype());
+            // Use full `options` (not options.dtype()) to preserve device placement (e.g. CUDA)
+            alpha = torch::zeros({2, specDimAlpha, 1, numUnstable}, options);
             // Broadcast slope init to both alpha[0] and alpha[1]
             expanded = slope_init.view({1, 1, 1, numUnstable})
                         .expand({2, specDim, 1, numUnstable})
@@ -292,7 +293,8 @@ AlphaParameters& AlphaCROWNAnalysis::ensureAlphaFor(
                 }
             }
 
-            alpha = torch::zeros({2, specDimAlpha, 1, numUnstable, alphaSlots}, options.dtype());
+            // Use full `options` (not options.dtype()) to preserve device placement (e.g. CUDA)
+            alpha = torch::zeros({2, specDimAlpha, 1, numUnstable, alphaSlots}, options);
             auto expanded_mid = mid_unstable.view({1, 1, 1, numUnstable})
                 .expand({2, specDim, 1, numUnstable})
                 .contiguous()

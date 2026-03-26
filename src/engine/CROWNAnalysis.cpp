@@ -406,11 +406,12 @@ void CROWNAnalysis::backwardFrom(unsigned startIndex, const Vector<unsigned>& un
         unsigned numUnstable = unstableIndices.size();
         // Shape: [numUnstable, 1, startSize] = [spec, batch, features]
         // C has 1s at (i, 0, unstableIndices[i])
-        auto options = torch::TensorOptions().dtype(torch::kFloat32).device(_torchModel->getDevice());
-        torch::Tensor identityMatrix = torch::zeros({(long)numUnstable, 1, (long)startSize}, options);
-        
-        // Fill manually or use scatter
-        // Since batch=1, we fill identityMatrix[i, 0, unstableIndices[i]] = 1
+        // Build the sparse identity on CPU first (accessor requires CPU memory),
+        // then move to the target device.
+        torch::Tensor identityMatrix = torch::zeros({(long)numUnstable, 1, (long)startSize},
+                                                     torch::TensorOptions().dtype(torch::kFloat32));
+
+        // Fill manually: identityMatrix[i, 0, unstableIndices[i]] = 1
         auto accessor = identityMatrix.accessor<float, 3>();
         for (unsigned i = 0; i < numUnstable; ++i) {
             unsigned idx = unstableIndices[i];
@@ -418,6 +419,7 @@ void CROWNAnalysis::backwardFrom(unsigned startIndex, const Vector<unsigned>& un
                 accessor[i][0][idx] = 1.0f;
             }
         }
+        identityMatrix = identityMatrix.to(_torchModel->getDevice());
         
         _lA[startIndex] = BoundA(identityMatrix);
         _uA[startIndex] = BoundA(identityMatrix);
@@ -425,8 +427,9 @@ void CROWNAnalysis::backwardFrom(unsigned startIndex, const Vector<unsigned>& un
         // Bias initialization: matches spec dimension (numUnstable)
         // Initialize as [spec, batch] format: [numUnstable, 1]
         // Bias accumulates terms from backward pass. Initial bias is 0.
-        _lowerBias[startIndex] = torch::zeros({(long)numUnstable, 1}, options);
-        _upperBias[startIndex] = torch::zeros({(long)numUnstable, 1}, options);
+        auto biasOpts = torch::TensorOptions().dtype(torch::kFloat32).device(_torchModel->getDevice());
+        _lowerBias[startIndex] = torch::zeros({(long)numUnstable, 1}, biasOpts);
+        _upperBias[startIndex] = torch::zeros({(long)numUnstable, 1}, biasOpts);
         
         log(Stringf("backwardFrom() - Initialized sparse C for node %u with %u unstable neurons", startIndex, numUnstable));
     }

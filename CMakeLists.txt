@@ -132,14 +132,29 @@ include_directories(SYSTEM ${ONNX_DIR})
 #############
 
 set(PYTORCH_VERSION 2.2.1)
-set(PYTORCH_DIR "${TOOLS_DIR}/libtorch-${PYTORCH_VERSION}")
-list(APPEND CMAKE_PREFIX_PATH ${PYTORCH_DIR})
 
-if(NOT EXISTS "${PYTORCH_DIR}")
-    execute_process(COMMAND ${TOOLS_DIR}/download_libtorch.sh ${PYTORCH_VERSION})
+# First, try to find PyTorch from the active Python environment (handles CUDA correctly)
+execute_process(
+    COMMAND python3 -c "import torch; print(torch.utils.cmake_prefix_path)"
+    OUTPUT_VARIABLE TORCH_PYTHON_PREFIX
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+    ERROR_QUIET
+    RESULT_VARIABLE TORCH_PYTHON_RESULT
+)
+
+if(TORCH_PYTHON_RESULT EQUAL 0 AND TORCH_PYTHON_PREFIX)
+    message(STATUS "Found PyTorch from Python environment: ${TORCH_PYTHON_PREFIX}")
+    list(APPEND CMAKE_PREFIX_PATH ${TORCH_PYTHON_PREFIX})
+else()
+    # Fallback to local libtorch
+    set(PYTORCH_DIR "${TOOLS_DIR}/libtorch-${PYTORCH_VERSION}")
+    list(APPEND CMAKE_PREFIX_PATH ${PYTORCH_DIR})
+    if(NOT EXISTS "${PYTORCH_DIR}")
+        execute_process(COMMAND ${TOOLS_DIR}/download_libtorch.sh ${PYTORCH_VERSION})
+    endif()
 endif()
 
-find_package(Torch ${PYTORCH_VERSION} REQUIRED)
+find_package(Torch REQUIRED)
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${TORCH_CXX_FLAGS}")
 list(APPEND LIBS ${TORCH_LIBRARIES})
 
@@ -232,9 +247,9 @@ target_include_directories(${LUNA_LIB} PUBLIC
 
 # Link libraries
 if (BUILD_STATIC_LUNA)
-  target_link_libraries(${LUNA_LIB} ${LIBS} -static)
+  target_link_libraries(${LUNA_LIB} PUBLIC ${LIBS} -static)
 else()
-  target_link_libraries(${LUNA_LIB} ${LIBS})
+  target_link_libraries(${LUNA_LIB} PUBLIC ${LIBS})
 endif()
 
 target_compile_options(${LUNA_LIB} PRIVATE ${RELEASE_FLAGS})
@@ -247,7 +262,7 @@ add_subdirectory(src/configuration)
 
 # Build main luna executable
 add_executable(luna src/main.cpp src/engine/LunaMain.cpp)
-target_link_libraries(luna ${LUNA_LIB})
+target_link_libraries(luna ${LUNA_LIB} ${LIBS})
 target_include_directories(luna PRIVATE
     ${SRC_DIR}
     ${LIBS_INCLUDES}

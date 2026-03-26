@@ -923,6 +923,12 @@ BoundedTensor<torch::Tensor> TorchModel::runAlphaCROWN(const BoundedTensor<torch
                                                         bool optimizeLower, bool optimizeUpper) {
     log("[TorchModel] Running AlphaCROWN analysis - Delegating to AlphaCROWNAnalysis");
 
+    // Cache node shapes using a center-point forward pass (same as runCROWN).
+    // Without this, Conv/BN nodes lack cached spatial dimensions and the
+    // backward bound propagation can segfault.
+    setInputBounds(inputBounds);
+    cacheForwardShapesFromCenter();
+
     // Create AlphaCROWN analysis instance
     std::unique_ptr<AlphaCROWNAnalysis> alphaCrownAnalysis = std::make_unique<AlphaCROWNAnalysis>(this);
 

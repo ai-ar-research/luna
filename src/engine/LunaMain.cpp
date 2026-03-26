@@ -4,7 +4,6 @@
 #include "LunaError.h"
 #include "configuration/LunaConfiguration.h"
 #include "input_parsers/OutputConstraint.h"
-#include "input_parsers/VnnLibInputParser.h"
 #include <torch/torch.h>
 #include <iostream>
 #include <iomanip>
@@ -63,14 +62,10 @@ enum class PropertyStatus {
 };
 
 static PropertyStatus evaluatePropertyStatus(
-    const NLR::OutputConstraintSet& constraints,
+    const NLR::CMatrixResult& cMatrix,
     const torch::Tensor& lowerBounds,
     const torch::Tensor& upperBounds,
     std::string& detail) {
-    if (!constraints.hasConstraints()) {
-        detail = "no output constraints found in VNN-LIB";
-        return PropertyStatus::Unknown;
-    }
 
     if (!lowerBounds.defined() || !upperBounds.defined()) {
         detail = "bounds are undefined";
@@ -85,7 +80,6 @@ static PropertyStatus evaluatePropertyStatus(
         return PropertyStatus::Unknown;
     }
 
-    NLR::CMatrixResult cMatrix = constraints.toCMatrix();
     torch::Tensor thresholds = cMatrix.thresholds.to(ub.device());
 
     if (lb.numel() != thresholds.numel() || ub.numel() != thresholds.numel()) {
@@ -321,6 +315,7 @@ int lunaMain(int argc, char* argv[]) {
                           << ", patience=" << LunaConfiguration::EARLY_STOP_PATIENCE << ")";
             }
             std::cout << std::endl;
+            std::cout << "Device:   " << LunaConfiguration::getDevice().str() << std::endl;
         }
 
         if (LunaConfiguration::ANALYSIS_METHOD == LunaConfiguration::AnalysisMethod::AlphaCROWN) {
@@ -349,21 +344,17 @@ int lunaMain(int argc, char* argv[]) {
             return 1;
         }
 
-        // Step 6: Verify property if constraints exist in VNN-LIB
+        // Step 6: Verify property using the specification already stored in the model
         PropertyStatus status = PropertyStatus::Unknown;
         std::string statusDetail;
-        try {
-            NLR::OutputConstraintSet outputConstraints =
-                VnnLibInputParser::parseOutputConstraints(
-                    String(vnnlibFilePath.c_str()),
-                    torchModel->getOutputSize());
-            status = evaluatePropertyStatus(outputConstraints,
+        if (torchModel->hasSpecificationMatrix()) {
+            NLR::CMatrixResult specResult = torchModel->getSpecificationMatrixResult();
+            status = evaluatePropertyStatus(specResult,
                                             result.lower(),
                                             result.upper(),
                                             statusDetail);
-        } catch (const std::exception& e) {
-            statusDetail = std::string("failed to parse output constraints: ") + e.what();
-            status = PropertyStatus::Unknown;
+        } else {
+            statusDetail = "no specification matrix set";
         }
 
         std::string statusLabel;

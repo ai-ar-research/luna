@@ -447,21 +447,37 @@ std::shared_ptr<NLR::TorchModel> OnnxToTorchParser::processGraph() {
                 
                 if (node.op_type() == "MatMul" || node.op_type() == "Gemm") {
                     if (node.input_size() >= 2) {
-                        Vector<int> input0_shape = shape_metadata.exists(node.input(0)) ? 
-                                                   shape_metadata[node.input(0)] : Vector<int>();
-                        String weight_name = node.input(1);
-                        
-                        if (!input0_shape.empty() && name_to_initializer.exists(weight_name)) {
-                            const auto& weight_tensor = name_to_initializer[weight_name];
-                            if (weight_tensor.dims_size() == 2) {
+                        String input0Name = node.input(0);
+                        String input1Name = node.input(1);
+
+                        if (name_to_initializer.exists(input1Name)) {
+                            // Standard: X @ W, W is (K, N) -> output is (batch, N)
+                            Vector<int> input0_shape = shape_metadata.exists(input0Name) ?
+                                                       shape_metadata[input0Name] : Vector<int>();
+                            const auto& weight_tensor = name_to_initializer[input1Name];
+                            if (weight_tensor.dims_size() == 2 && !input0_shape.empty()) {
                                 int batch = input0_shape[0];
                                 int N = weight_tensor.dims(1);
                                 output_shape.append(batch);
                                 output_shape.append(N);
                             }
+                        } else if (name_to_initializer.exists(input0Name)) {
+                            // Transposed: W @ X, W is (M, K) -> output is (M, batch)
+                            // More commonly W is (out_features, in_features), X is (in_features,)
+                            Vector<int> input1_shape = shape_metadata.exists(input1Name) ?
+                                                       shape_metadata[input1Name] : Vector<int>();
+                            const auto& weight_tensor = name_to_initializer[input0Name];
+                            if (weight_tensor.dims_size() == 2) {
+                                int M = weight_tensor.dims(0);
+                                if (!input1_shape.empty()) {
+                                    int batch = input1_shape[0];
+                                    output_shape.append(batch);
+                                }
+                                output_shape.append(M);
+                            }
                         }
                     }
-                } else if (node.op_type() == "Relu" || node.op_type() == "Sigmoid" || 
+                } else if (node.op_type() == "Relu" || node.op_type() == "Sigmoid" ||
                            node.op_type() == "Dropout" || node.op_type() == "BatchNormalization") {
                     // Shape-preserving operations
                     if (node.input_size() > 0 && shape_metadata.exists(node.input(0))) {
@@ -878,22 +894,33 @@ std::shared_ptr<NLR::TorchModel> OnnxToTorchParser::processGraph() {
                     Vector<int> output_shape;
                     
                     if (node.op_type() == "MatMul" || node.op_type() == "Gemm") {
-                        // MatMul: [M, K] x [K, N] -> [M, N]
                         if (node.input_size() >= 2) {
-                            Vector<int> input0_shape = shape_metadata.exists(node.input(0)) ? 
-                                                       shape_metadata[node.input(0)] : Vector<int>();
-                            String weight_name = node.input(1);
-                            
-                            // Get weight shape from initializer
-                            if (name_to_initializer.exists(weight_name)) {
-                                const auto& weight_tensor = name_to_initializer[weight_name];
+                            String input0Name = node.input(0);
+                            String input1Name = node.input(1);
+
+                            if (name_to_initializer.exists(input1Name)) {
+                                // Standard: X @ W
+                                Vector<int> input0_shape = shape_metadata.exists(input0Name) ?
+                                                           shape_metadata[input0Name] : Vector<int>();
+                                const auto& weight_tensor = name_to_initializer[input1Name];
                                 if (weight_tensor.dims_size() == 2 && !input0_shape.empty()) {
-                                    // Input: [batch, K], Weight: [K, N] -> Output: [batch, N]
                                     int batch = input0_shape[0];
                                     int N = weight_tensor.dims(1);
                                     output_shape.append(batch);
                                     output_shape.append(N);
-                                    
+                                }
+                            } else if (name_to_initializer.exists(input0Name)) {
+                                // Transposed: W @ X
+                                Vector<int> input1_shape = shape_metadata.exists(input1Name) ?
+                                                           shape_metadata[input1Name] : Vector<int>();
+                                const auto& weight_tensor = name_to_initializer[input0Name];
+                                if (weight_tensor.dims_size() == 2) {
+                                    int M = weight_tensor.dims(0);
+                                    if (!input1_shape.empty()) {
+                                        int batch = input1_shape[0];
+                                        output_shape.append(batch);
+                                    }
+                                    output_shape.append(M);
                                 }
                             }
                         }
@@ -1587,33 +1614,52 @@ namespace BoundedOperationConverter {
         String input1Name = node.input(0);
         String input2Name = node.input(1);
 
-        // Check if second input is a constant (weight matrix)
+        // Check which input is a constant (weight matrix)
+        // Standard case: Y = X @ W (weights are second input)
+        // Transposed case: Y = W @ X (weights are first input)
         torch::Tensor weights;
         bool foundWeights = false;
+        bool weightsAreFirstInput = false;
 
         if (constants.exists(input2Name)) {
             weights = constants[input2Name];
             foundWeights = true;
+        } else if (constants.exists(input1Name)) {
+            weights = constants[input1Name];
+            foundWeights = true;
+            weightsAreFirstInput = true;
         }
 
         if (!foundWeights) {
-            onnxToTorchInvalidWeightBiasError("MatMul", "Weight tensor (second input) not found in constants");
+            onnxToTorchInvalidWeightBiasError("MatMul", "Weight tensor not found in constants (checked both inputs)");
             return nullptr;
         }
 
-        // MatMul is Y = X @ W, where X is (batch, in_features) and W is (in_features, out_features)
-        // PyTorch Linear expects (in_features, out_features) transposed, i.e., weight shape is (out_features, in_features)
-        // So we need to transpose the ONNX weight matrix
-        torch::Tensor transposed_weights = weights.transpose(-2, -1);
+        // Determine in_features and out_features based on weight placement
+        // Standard (weights second): Y = X @ W, W is (in_features, out_features)
+        //   -> PyTorch Linear weight shape: (out_features, in_features) = W^T
+        // Transposed (weights first): Y = W @ X, W is (out_features, in_features)
+        //   -> PyTorch Linear weight shape: (out_features, in_features) = W (already correct)
+        torch::Tensor transposed_weights;
+        int64_t in_features;
+        int64_t out_features;
+
+        if (weightsAreFirstInput) {
+            // W @ X: W is (out_features, in_features), already in PyTorch Linear format
+            out_features = weights.size(-2);
+            in_features = weights.size(-1);
+            transposed_weights = weights;
+        } else {
+            // X @ W: W is (in_features, out_features), needs transpose
+            in_features = weights.size(-2);
+            out_features = weights.size(-1);
+            transposed_weights = weights.transpose(-2, -1);
+        }
 
         // Ensure weights have proper properties for gradient-based optimization
         // This is critical for Alpha-CROWN to work correctly when parsing from ONNX files
         // Network weights are constants for Alpha-CROWN (only alpha parameters are optimized)
         transposed_weights = transposed_weights.contiguous().to(torch::kFloat32).detach().requires_grad_(false);
-
-        // Create linear module without bias (MatMul doesn't include bias)
-        int64_t in_features = weights.size(0);
-        int64_t out_features = weights.size(1);
 
         auto linear_module = torch::nn::Linear(torch::nn::LinearOptions(in_features, out_features).bias(false));
         linear_module->weight = transposed_weights;

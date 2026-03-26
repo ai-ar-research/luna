@@ -270,6 +270,25 @@ int VnnLibInputParser::parseCondition(int index,
         }
         return index + 1; // Skip closing )
     }
+    else if (op == "or" || op == "OR" || op == "Or")
+    {
+        // OR may contain AND branches with input bounds (common VNN-LIB pattern:
+        // (assert (or (and (>= X_0 -1) (<= X_0 1) (>= Y_0 100))))
+        // Recurse into each branch to extract any input variable constraints.
+        ++index;
+        while ((unsigned)index < tokens.size() && tokens[index] != ")")
+        {
+            if (tokens[index] == "(")
+            {
+                index = parseCondition(index + 1, tokens, inputBounds);
+            }
+            else
+            {
+                ++index;
+            }
+        }
+        return index + 1; // Skip closing )
+    }
     else if (op == "<=" || op == ">=")
     {
         // Parse simple bound: (op var value) or (op value var)
@@ -1198,24 +1217,94 @@ int VnnLibInputParser::parseConditionBoth(int index,
 
         if (hasOutputVar)
         {
-            // This OR involves output variables - use output constraint parsing
-            // Parse OR disjunction: collect each branch separately
+            // This OR involves output variables - parse both input bounds and output constraints.
+            // VNN-LIB commonly embeds input bounds alongside output constraints inside
+            // (or (and (input constraints) (output constraints))) blocks.
             ++index;
-            
+
             unsigned outputDim = outputConstraints.getOutputDimension();
             Vector<Vector<NLR::OutputConstraint>> branches;
-            
+
             while ((unsigned)index < tokens.size() && tokens[index] != ")")
             {
                 if (tokens[index] == "(")
                 {
-                    // Parse a single branch (can be AND or single constraint)
-                    Vector<NLR::OutputConstraint> branchConstraints;
-                    index = parseOutputBranch(index + 1, tokens, branchConstraints, outputDim);
-                    
-                    if (branchConstraints.size() > 0)
+                    ++index;
+                    if ((unsigned)index >= tokens.size())
+                        break;
+
+                    const String &branchOp = tokens[index];
+
+                    if (branchOp == "and" || branchOp == "AND" || branchOp == "And")
                     {
-                        branches.append(branchConstraints);
+                        // AND branch: parse each sub-condition, routing input
+                        // constraints to inputBounds and output constraints to branchConstraints
+                        ++index;
+                        Vector<NLR::OutputConstraint> branchConstraints;
+
+                        while ((unsigned)index < tokens.size() && tokens[index] != ")")
+                        {
+                            if (tokens[index] == "(")
+                            {
+                                // Peek to see if this sub-condition is input or output
+                                int subPeek = index + 1;
+                                bool subHasInput = false;
+                                bool subHasOutput = false;
+                                int subDepth = 1;
+                                while ((unsigned)subPeek < tokens.size() && subDepth > 0)
+                                {
+                                    if (tokens[subPeek] == "(") ++subDepth;
+                                    else if (tokens[subPeek] == ")") --subDepth;
+                                    else if (isInputVariable(tokens[subPeek])) subHasInput = true;
+                                    else if (isOutputVariable(tokens[subPeek])) subHasOutput = true;
+                                    ++subPeek;
+                                }
+
+                                if (subHasInput && !subHasOutput)
+                                {
+                                    // Input constraint - apply to inputBounds
+                                    index = parseCondition(index + 1, tokens, inputBounds);
+                                }
+                                else if (subHasOutput)
+                                {
+                                    // Output constraint - add to branch
+                                    index = parseOutputBranch(index + 1, tokens, branchConstraints, outputDim);
+                                }
+                                else
+                                {
+                                    // Skip unknown
+                                    int skipDepth = 1;
+                                    ++index;
+                                    while ((unsigned)index < tokens.size() && skipDepth > 0)
+                                    {
+                                        if (tokens[index] == "(") ++skipDepth;
+                                        else if (tokens[index] == ")") --skipDepth;
+                                        ++index;
+                                    }
+                                }
+                            }
+                            else
+                            {
+                                ++index;
+                            }
+                        }
+
+                        if (branchConstraints.size() > 0)
+                        {
+                            branches.append(branchConstraints);
+                        }
+                        if ((unsigned)index < tokens.size() && tokens[index] == ")")
+                            ++index;
+                    }
+                    else
+                    {
+                        // Single constraint (not AND) - try as output branch
+                        Vector<NLR::OutputConstraint> branchConstraints;
+                        index = parseOutputBranch(index, tokens, branchConstraints, outputDim);
+                        if (branchConstraints.size() > 0)
+                        {
+                            branches.append(branchConstraints);
+                        }
                     }
                 }
                 else
@@ -1223,13 +1312,13 @@ int VnnLibInputParser::parseConditionBoth(int index,
                     ++index;
                 }
             }
-            
+
             // Add all branches as OR branches
             for (unsigned i = 0; i < branches.size(); ++i)
             {
                 outputConstraints.addORBranch(branches[i]);
             }
-            
+
             return index + 1;
         }
         else

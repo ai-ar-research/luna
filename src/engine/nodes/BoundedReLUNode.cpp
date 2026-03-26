@@ -624,7 +624,8 @@ void BoundedReLUNode::_maskAlpha(const torch::Tensor& input_lower, const torch::
 
             // Build alpha_full using scatter (non-in-place version returns new tensor)
             // Expand indices from [numUnstable] to [specDim, numUnstable] for scatter
-            auto indices = alphaResult.unstableIndices.unsqueeze(0).expand({specDim, alphaResult.numUnstable});
+            // Ensure indices are on the same device as alpha (defensive against device mismatches)
+            auto indices = alphaResult.unstableIndices.to(options.device()).unsqueeze(0).expand({specDim, alphaResult.numUnstable});
 
             // scatter() returns a new tensor (not in-place like scatter_())
             // Build separate full tensors for lA and uA paths
