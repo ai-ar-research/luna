@@ -524,7 +524,7 @@ BoundA BoundedConvNode::boundOneSide(const BoundA& last_A,
     if (last_A.isTensor()) {
         // Matrix mode (Tensor) logic
         torch::Tensor last_A_tensor = last_A.asTensor();
-        
+
         // Use transpose convolution for backward pass
         // Compute output padding for transpose convolution
 
@@ -679,9 +679,9 @@ BoundA BoundedConvNode::boundOneSide(const BoundA& last_A,
     } else {
         // Patches mode
         auto last_patches = last_A.asPatches();
-        
+
         torch::Tensor pieces;
-        
+
         if (last_patches->identity == 0) {
             torch::Tensor patches_tensor;
             bool is_sparse = last_patches->unstable_idx.has_value();
@@ -754,29 +754,28 @@ BoundA BoundedConvNode::boundOneSide(const BoundA& last_A,
             pieces = pieces.view(new_shape);
 
         } else if (last_patches->identity == 1) {
-            // Identity patches
+            // Identity patches: each output neuron maps to itself.
+            // Instead of conv_transpose2d on a huge dense A, we directly use
+            // the weight tensor reshaped as patches. This is the key efficiency
+            // win of patches mode.
             // weight: [out_c, in_c, k_h, k_w]
+            // output_shape convention: [batch, C, H, W] (following auto_LiRPA)
+
+            int64_t batch_size = last_patches->output_shape[0]; // batch dim
+            int64_t out_h     = last_patches->output_shape[2];
+            int64_t out_w     = last_patches->output_shape[3];
 
             if (last_patches->unstable_idx.has_value()) {
                 // Sparse identity patches - only compute for unstable neurons
-                // This is a key optimization: we only propagate bounds for neurons that cross zero
                 const auto& unstable_idx = last_patches->unstable_idx.value();
 
-                // unstable_idx[0] contains the channel indices of unstable neurons
-                // For conv layers, we select weights for those output channels
                 // pieces shape: [unstable_size, batch, in_c, k_h, k_w]
                 pieces = weight.view({weight.size(0), 1, weight.size(1), weight.size(2), weight.size(3)});
-
-                // Select only the weights for unstable output channels
                 pieces = pieces.index_select(0, unstable_idx[0]);
-
-                // Expand batch dimension
-                int64_t batch_size = last_patches->output_shape[1];
                 pieces = pieces.expand({-1, batch_size, -1, -1, -1});
 
-                // Bias - also select only for unstable channels
+                // Bias - select only for unstable channels
                 if (has_bias && bias.defined()) {
-                    // Select bias for unstable channels and expand to (unstable_size, batch)
                     sum_bias = bias.index_select(0, unstable_idx[0]).unsqueeze(-1);
                     sum_bias = sum_bias.expand({-1, batch_size});
                 } else {
@@ -784,21 +783,19 @@ BoundA BoundedConvNode::boundOneSide(const BoundA& last_A,
                 }
             } else {
                 // Dense (non-sparse) identity patches
+                // [out_c, 1, 1, 1, in_c, k_h, k_w] -> expand to [out_c, batch, out_h, out_w, in_c, k_h, k_w]
                 pieces = weight.view({weight.size(0), 1, 1, 1, weight.size(1), weight.size(2), weight.size(3)});
-                // Expand
                 std::vector<int64_t> expand_dims = {
                     weight.size(0),
-                    last_patches->output_shape[1], // batch
-                    last_patches->output_shape[2], // out_h
-                    last_patches->output_shape[3], // out_w
+                    batch_size, out_h, out_w,
                     weight.size(1), weight.size(2), weight.size(3)
                 };
                 pieces = pieces.expand(expand_dims);
 
-                // Bias
+                // Bias: [out_c, batch, out_h, out_w]
                 if (has_bias && bias.defined()) {
                     sum_bias = bias.view({-1, 1, 1, 1}).expand({
-                        weight.size(0), last_patches->output_shape[1], last_patches->output_shape[2], last_patches->output_shape[3]
+                        weight.size(0), batch_size, out_h, out_w
                     });
                 } else {
                     sum_bias = torch::zeros({1}, weight.options());
@@ -852,14 +849,19 @@ BoundA BoundedConvNode::boundOneSide(const BoundA& last_A,
             return BoundA(A_matrix);
         }
 
+        // Propagate patches with updated stride/padding and this node's input_shape
+        // so that patches_to_matrix can be called later if needed.
+        std::vector<int64_t> in_shape_64;
+        for (int s : input_shape) in_shape_64.push_back(static_cast<int64_t>(s));
+
         return BoundA(last_patches->create_similar(
             pieces,
             new_stride_vec,
             new_padding_vec,
             new_output_padding_vec,
-            0, 
-            std::nullopt, // identity
-            std::nullopt // input_shape
+            0,
+            std::nullopt, // identity = 0 (default, since we materialized)
+            in_shape_64   // input_shape for this conv layer
         ));
     }
 }

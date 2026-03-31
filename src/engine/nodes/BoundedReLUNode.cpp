@@ -86,21 +86,6 @@ void BoundedReLUNode::boundBackward(
     }
     _currentSpecDim = specDim;  // Store for use in _maskAlpha
 
-    // DEBUG: Print spec dimension
-    if (LunaConfiguration::VERBOSE) {
-        printf("[DEBUG BoundedReLUNode::backward] node=%u, specDim=%d", getNodeIndex(), specDim);
-        if (effective_lA.defined() && effective_lA.isTensor()) {
-            auto t = effective_lA.asTensor();
-            printf(", lA.dim=%d, lA.shape=[", (int)t.dim());
-            for (int i = 0; i < t.dim(); ++i) {
-                if (i > 0) printf(",");
-                printf("%lld", (long long)t.size(i));
-            }
-            printf("]");
-        }
-        printf("\n");
-    }
-
     // Call the unified backward relaxation method
     auto relaxation_result = _backwardRelaxation(effective_lA, effective_uA, input_lower, input_upper);
 
@@ -223,54 +208,87 @@ void BoundedReLUNode::boundBackward(
         } else {
             // Patches mode
             auto patches = effective_lA.asPatches();
-            
-            // maybe_unfold_patches
-            torch::Tensor aL_l_unfolded = maybe_unfold_patches(aL_l, effective_lA);
-            torch::Tensor aU_l_unfolded = maybe_unfold_patches(aU_l, effective_lA);
-            
-            // Patches doesn't support clamp directly on object, need to use patches tensor
+            bool is_sparse = patches->unstable_idx.has_value();
+
+            // Helper: reshape flat tensor to [N, C, H, W] using patches->input_shape
+            auto ensure_4d = [&patches](torch::Tensor& t) {
+                if (!t.defined()) return;
+                auto& shape = patches->input_shape;
+                if (shape.size() < 4) return;
+                int64_t C = shape[1], H = shape[2], W = shape[3];
+                if (t.dim() == 1 && t.size(0) == C * H * W) t = t.view({1, C, H, W});
+                else if (t.dim() == 2 && t.size(1) == C * H * W) t = t.view({t.size(0), C, H, W});
+                else if (t.dim() == 3) t = t.unsqueeze(0);
+            };
+
+            // Helper: unfold slopes and select at unstable positions for sparse patches
+            // Input: 4D tensor [N, C, H, W] (N=1 for shared, N=spec for per-spec alpha)
+            // Output: [unstable, N, C, kh, kw] for shared (N=1), or [unstable, 1, C, kh, kw] for per-spec
+            auto unfold_and_select_sparse = [&patches](const torch::Tensor& t, const torch::Tensor& P) {
+                torch::Tensor unfolded = inplace_unfold(t,
+                    {P.size(-2), P.size(-1)},
+                    patches->stride, patches->padding, patches->inserted_zeros, patches->output_padding);
+                // unfolded: [N, out_h, out_w, C, kh, kw]
+
+                auto& idx = patches->unstable_idx.value();
+                if (unfolded.size(0) == 1) {
+                    // Shared slopes: permute → [out_h, out_w, 1, C, kh, kw], select → [unstable, 1, C, kh, kw]
+                    return unfolded.permute({1, 2, 0, 3, 4, 5}).index({idx[1], idx[2]});
+                } else {
+                    // Per-spec slopes: diagonal select [i, h_idx[i], w_idx[i]] → [unstable, C, kh, kw]
+                    auto arange_idx = torch::arange(unfolded.size(0), idx[1].options());
+                    return unfolded.index({arange_idx, idx[1], idx[2]}).unsqueeze(1);
+                }
+            };
+
             torch::Tensor P = patches->patches;
             torch::Tensor Ppos = torch::clamp_min(P, 0);
             torch::Tensor Pneg = torch::clamp_max(P, 0);
-            
-            // Multiply unfolded slopes
-            // Shapes should match or broadcast
-            torch::Tensor P_new = Ppos * aL_l_unfolded + Pneg * aU_l_unfolded;
-            
-            new_lA = BoundA(patches->create_similar(P_new));
-            
-            // Expand bias if [C, H, W] -> [1, C, H, W]
-            if (bL_l.dim() == 3) bL_l = bL_l.unsqueeze(0);
-            if (bU_l.dim() == 3) bU_l = bU_l.unsqueeze(0);
-            
-            // Unfold
-            torch::Tensor bL_unfolded = inplace_unfold(bL_l, 
-                {patches->patches.size(-2), patches->patches.size(-1)}, 
-                patches->stride, patches->padding, patches->inserted_zeros, patches->output_padding);
-            
-            
-            torch::Tensor bL_ready = bL_unfolded.permute({0, 1, 2, 3, 4, 5}).unsqueeze(0);
-            // [1, batch, out_h, out_w, C, kh, kw]
 
-            // Define bU_ready
-            torch::Tensor bU_unfolded = inplace_unfold(bU_l,
-                {patches->patches.size(-2), patches->patches.size(-1)},
-                patches->stride, patches->padding, patches->inserted_zeros, patches->output_padding);
-            torch::Tensor bU_ready = bU_unfolded.permute({0, 1, 2, 3, 4, 5}).unsqueeze(0);
+            if (is_sparse) {
+                // Sparse patches: P shape [unstable, batch, C, kh, kw]
+                // Slopes must be unfolded to match patch kernel structure, then selected
+                // at the start node's unstable spatial positions.
+                ensure_4d(aL_l); ensure_4d(aU_l);
+                torch::Tensor aL_sel = unfold_and_select_sparse(aL_l, P);
+                torch::Tensor aU_sel = unfold_and_select_sparse(aU_l, P);
+                // aL_sel, aU_sel: [unstable, 1, C, kh, kw] — broadcasts with [unstable, batch, C, kh, kw]
 
-            // Ppos * bL_ready -> [out_c, batch, out_h, out_w, C, kh, kw]
-            // Sum over C, kh, kw -> [out_c, batch, out_h, out_w]
-            // Result is bias [batch, out_c, out_h, out_w]
+                torch::Tensor P_new = Ppos * aL_sel + Pneg * aU_sel;
+                new_lA = BoundA(patches->create_similar(P_new));
 
-            torch::Tensor term1 = (Ppos * bL_ready).sum({-3, -2, -1});
-            torch::Tensor term2 = (Pneg * bU_ready).sum({-3, -2, -1});
-            
-            torch::Tensor total_bias = term1 + term2; // [out_c, batch, out_h, out_w]
-            
-            // Permute to [batch, out_c, out_h, out_w]
-            total_bias = total_bias.permute({1, 0, 2, 3});
-            
-            lbias = lbias.defined() ? (lbias + total_bias) : total_bias;
+                // Bias: same unfold-and-select approach
+                ensure_4d(bL_l); ensure_4d(bU_l);
+                torch::Tensor bL_sel = unfold_and_select_sparse(bL_l, P);
+                torch::Tensor bU_sel = unfold_and_select_sparse(bU_l, P);
+                torch::Tensor term1 = (Ppos * bL_sel).sum({-3, -2, -1}); // [unstable, batch]
+                torch::Tensor term2 = (Pneg * bU_sel).sum({-3, -2, -1});
+                torch::Tensor total_bias = term1 + term2;
+                lbias = lbias.defined() ? (lbias + total_bias) : total_bias;
+            } else {
+                // Dense patches: [out_c, batch, out_h, out_w, C, kh, kw]
+                torch::Tensor aL_l_unfolded = maybe_unfold_patches(aL_l, effective_lA);
+                torch::Tensor aU_l_unfolded = maybe_unfold_patches(aU_l, effective_lA);
+
+                torch::Tensor P_new = Ppos * aL_l_unfolded + Pneg * aU_l_unfolded;
+                new_lA = BoundA(patches->create_similar(P_new));
+
+                ensure_4d(bL_l); ensure_4d(bU_l);
+                torch::Tensor bL_unfolded = inplace_unfold(bL_l,
+                    {P.size(-2), P.size(-1)},
+                    patches->stride, patches->padding, patches->inserted_zeros, patches->output_padding);
+                torch::Tensor bL_ready = bL_unfolded.permute({0, 1, 2, 3, 4, 5}).unsqueeze(0);
+                torch::Tensor bU_unfolded = inplace_unfold(bU_l,
+                    {P.size(-2), P.size(-1)},
+                    patches->stride, patches->padding, patches->inserted_zeros, patches->output_padding);
+                torch::Tensor bU_ready = bU_unfolded.permute({0, 1, 2, 3, 4, 5}).unsqueeze(0);
+
+                torch::Tensor term1 = (Ppos * bL_ready).sum({-3, -2, -1});
+                torch::Tensor term2 = (Pneg * bU_ready).sum({-3, -2, -1});
+                torch::Tensor total_bias = term1 + term2;
+                total_bias = total_bias.permute({1, 0, 2, 3});
+                lbias = lbias.defined() ? (lbias + total_bias) : total_bias;
+            }
         }
     }
 
@@ -297,39 +315,73 @@ void BoundedReLUNode::boundBackward(
         } else {
             // Patches mode
             auto patches = effective_uA.asPatches();
-            
-            // maybe_unfold_patches
-            torch::Tensor aU_u_unfolded = maybe_unfold_patches(aU_u, effective_uA);
-            torch::Tensor aL_u_unfolded = maybe_unfold_patches(aL_u, effective_uA);
-            
+            bool is_sparse = patches->unstable_idx.has_value();
+
+            auto ensure_4d = [&patches](torch::Tensor& t) {
+                if (!t.defined()) return;
+                auto& shape = patches->input_shape;
+                if (shape.size() < 4) return;
+                int64_t C = shape[1], H = shape[2], W = shape[3];
+                if (t.dim() == 1 && t.size(0) == C * H * W) t = t.view({1, C, H, W});
+                else if (t.dim() == 2 && t.size(1) == C * H * W) t = t.view({t.size(0), C, H, W});
+                else if (t.dim() == 3) t = t.unsqueeze(0);
+            };
+
+            auto unfold_and_select_sparse = [&patches](const torch::Tensor& t, const torch::Tensor& P) {
+                torch::Tensor unfolded = inplace_unfold(t,
+                    {P.size(-2), P.size(-1)},
+                    patches->stride, patches->padding, patches->inserted_zeros, patches->output_padding);
+                auto& idx = patches->unstable_idx.value();
+                if (unfolded.size(0) == 1) {
+                    return unfolded.permute({1, 2, 0, 3, 4, 5}).index({idx[1], idx[2]});
+                } else {
+                    auto arange_idx = torch::arange(unfolded.size(0), idx[1].options());
+                    return unfolded.index({arange_idx, idx[1], idx[2]}).unsqueeze(1);
+                }
+            };
+
             torch::Tensor P = patches->patches;
             torch::Tensor Ppos = torch::clamp_min(P, 0);
             torch::Tensor Pneg = torch::clamp_max(P, 0);
-            
-            torch::Tensor P_new = Ppos * aU_u_unfolded + Pneg * aL_u_unfolded;
-            new_uA = BoundA(patches->create_similar(P_new));
-            
-            // Bias
-            if (bU_u.dim() == 3) bU_u = bU_u.unsqueeze(0);
-            if (bL_u.dim() == 3) bL_u = bL_u.unsqueeze(0);
-            
-            torch::Tensor bU_unfolded = inplace_unfold(bU_u, 
-                {patches->patches.size(-2), patches->patches.size(-1)}, 
-                patches->stride, patches->padding, patches->inserted_zeros, patches->output_padding);
-            torch::Tensor bU_ready = bU_unfolded.permute({0, 1, 2, 3, 4, 5}).unsqueeze(0);
-            
-            torch::Tensor bL_unfolded = inplace_unfold(bL_u, 
-                {patches->patches.size(-2), patches->patches.size(-1)}, 
-                patches->stride, patches->padding, patches->inserted_zeros, patches->output_padding);
-            torch::Tensor bL_ready = bL_unfolded.permute({0, 1, 2, 3, 4, 5}).unsqueeze(0);
-            
-            torch::Tensor term1 = (Ppos * bU_ready).sum({-3, -2, -1});
-            torch::Tensor term2 = (Pneg * bL_ready).sum({-3, -2, -1});
-            
-            torch::Tensor total_bias = term1 + term2; 
-            total_bias = total_bias.permute({1, 0, 2, 3});
-            
-            ubias = ubias.defined() ? (ubias + total_bias) : total_bias;
+
+            if (is_sparse) {
+                ensure_4d(aU_u); ensure_4d(aL_u);
+                torch::Tensor aU_sel = unfold_and_select_sparse(aU_u, P);
+                torch::Tensor aL_sel = unfold_and_select_sparse(aL_u, P);
+
+                torch::Tensor P_new = Ppos * aU_sel + Pneg * aL_sel;
+                new_uA = BoundA(patches->create_similar(P_new));
+
+                ensure_4d(bU_u); ensure_4d(bL_u);
+                torch::Tensor bU_sel = unfold_and_select_sparse(bU_u, P);
+                torch::Tensor bL_sel = unfold_and_select_sparse(bL_u, P);
+                torch::Tensor term1 = (Ppos * bU_sel).sum({-3, -2, -1});
+                torch::Tensor term2 = (Pneg * bL_sel).sum({-3, -2, -1});
+                torch::Tensor total_bias = term1 + term2;
+                ubias = ubias.defined() ? (ubias + total_bias) : total_bias;
+            } else {
+                torch::Tensor aU_u_unfolded = maybe_unfold_patches(aU_u, effective_uA);
+                torch::Tensor aL_u_unfolded = maybe_unfold_patches(aL_u, effective_uA);
+
+                torch::Tensor P_new = Ppos * aU_u_unfolded + Pneg * aL_u_unfolded;
+                new_uA = BoundA(patches->create_similar(P_new));
+
+                ensure_4d(bU_u); ensure_4d(bL_u);
+                torch::Tensor bU_unfolded = inplace_unfold(bU_u,
+                    {P.size(-2), P.size(-1)},
+                    patches->stride, patches->padding, patches->inserted_zeros, patches->output_padding);
+                torch::Tensor bU_ready = bU_unfolded.permute({0, 1, 2, 3, 4, 5}).unsqueeze(0);
+                torch::Tensor bL_unfolded = inplace_unfold(bL_u,
+                    {P.size(-2), P.size(-1)},
+                    patches->stride, patches->padding, patches->inserted_zeros, patches->output_padding);
+                torch::Tensor bL_ready = bL_unfolded.permute({0, 1, 2, 3, 4, 5}).unsqueeze(0);
+
+                torch::Tensor term1 = (Ppos * bU_ready).sum({-3, -2, -1});
+                torch::Tensor term2 = (Pneg * bL_ready).sum({-3, -2, -1});
+                torch::Tensor total_bias = term1 + term2;
+                total_bias = total_bias.permute({1, 0, 2, 3});
+                ubias = ubias.defined() ? (ubias + total_bias) : total_bias;
+            }
         }
     }
 
@@ -345,10 +397,30 @@ torch::Tensor BoundedReLUNode::maybe_unfold_patches(const torch::Tensor& d_tenso
         return d_tensor;
     }
     auto patches = last_A.asPatches();
-    
+
     // d_tensor shape: [N, C, H, W]
     // Needs to unfold to match patches kernel [C, kh, kw] at each location
-    
+
+    // Flat 1D slopes (from 1D IBP bounds) need reshape to [batch, C, H, W]
+    // Use patches->input_shape (the Conv's input = the ReLU's spatial shape)
+    if (d_tensor.dim() <= 2 && patches->input_shape.size() >= 4) {
+        int64_t C = patches->input_shape[1];
+        int64_t H = patches->input_shape[2];
+        int64_t W = patches->input_shape[3];
+        int64_t batch = patches->input_shape[0];
+        torch::Tensor d_4d;
+        if (d_tensor.dim() == 1 && d_tensor.size(0) == C * H * W) {
+            d_4d = d_tensor.view({1, C, H, W});
+        } else if (d_tensor.dim() == 1 && d_tensor.size(0) == batch * C * H * W) {
+            d_4d = d_tensor.view({batch, C, H, W});
+        } else if (d_tensor.dim() == 2 && d_tensor.size(1) == C * H * W) {
+            d_4d = d_tensor.view({d_tensor.size(0), C, H, W});
+        } else {
+            d_4d = d_tensor.view({1, C, H, W});
+        }
+        return maybe_unfold_patches(d_4d, last_A);
+    }
+
     if (d_tensor.dim() == 3) {
         // [C, H, W] -> [1, C, H, W]
         return maybe_unfold_patches(d_tensor.unsqueeze(0), last_A);
@@ -488,11 +560,10 @@ torch::Tensor BoundedReLUNode::_computeStandardCROWNLowerBound(const torch::Tens
 
     // Case 2: input_upper <= 0 (always inactive) - slope = 0 (already initialized)
     // Case 3: uncertain neurons - use adaptive approach
+    // Always compute and apply via where() to avoid GPU→CPU sync from .any().item<bool>().
+    // For stable neurons the uncertain_mask makes this a no-op.
     auto uncertain_mask = (input_lower < 0) & (input_upper > 0);
-    if ( uncertain_mask.any().item<bool>() )
     {
-        // TODO: Avoid recomputing this and instead pass through by reference
-        // Compute upper slope for adaptive decision
         torch::Tensor ub_r = torch::clamp_min(input_upper, 0);
         torch::Tensor lb_r = torch::clamp_max(input_lower, 0);
         ub_r = torch::max(ub_r, lb_r + 1e-8);
@@ -533,12 +604,6 @@ void BoundedReLUNode::_maskAlpha(const torch::Tensor& input_lower, const torch::
         std::string startKey = crown->currentStartKey();
         if (startKey.empty()) startKey = "default";
 
-        // DEBUG: Print alpha application for every ReLU during backward pass
-        if (LunaConfiguration::VERBOSE) {
-            printf("[DEBUG _maskAlpha] node=%u, startKey=%s: APPLYING optimized alpha\n",
-                   getNodeIndex(), startKey.c_str());
-        }
-
         int specDim = _currentSpecDim;
         Vector<unsigned> currentSpecIndices;
         bool hasSpecLookup = false;
@@ -556,15 +621,6 @@ void BoundedReLUNode::_maskAlpha(const torch::Tensor& input_lower, const torch::
             getNodeIndex(),
             startKey, specDim, outDim,
             input_lower, input_upper);
-
-        if (LunaConfiguration::VERBOSE && alphaResult.alpha.defined()) {
-            printf("[DEBUG _maskAlpha] node=%u, alpha shape=[%lld,%lld,%lld], numUnstable=%d, outDim=%d\n",
-                   getNodeIndex(),
-                   alphaResult.alpha.dim() >= 1 ? (long long)alphaResult.alpha.size(0) : 0,
-                   alphaResult.alpha.dim() >= 2 ? (long long)alphaResult.alpha.size(1) : 0,
-                   alphaResult.alpha.dim() >= 3 ? (long long)alphaResult.alpha.size(2) : 0,
-                   alphaResult.numUnstable, alphaResult.outDim);
-        }
 
         if (alphaResult.numUnstable > 0 && alphaResult.alpha.defined() && alphaResult.alpha.numel() > 0) {
             // Clone alpha to create a fresh tensor for this iteration's computation graph.

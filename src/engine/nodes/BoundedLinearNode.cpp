@@ -72,27 +72,20 @@ torch::Tensor BoundedLinearNode::forward(const torch::Tensor& input) {
         _input_size = input.numel();
         _output_size = _linearModule->weight.size(0);
     }
-    
-    // Convert input and parameters to float32 on the input device for consistency
+
     const auto device = input.device();
     torch::Tensor inputFloat = input.to(torch::TensorOptions().dtype(torch::kFloat32).device(device)).contiguous();
-    torch::Tensor weight = _linearModule->weight
-        .to(torch::TensorOptions().dtype(torch::kFloat32).device(device))
-        .contiguous();
 
-    // Apply linear transformation: y = alpha * (W * x + b)
-    torch::Tensor weight_t = weight.t().contiguous();
-    torch::Tensor matmul_result = torch::matmul(inputFloat, weight_t);
-    torch::Tensor alpha_scaled = _alpha * matmul_result;
-    
-    // Add bias if defined
-    torch::Tensor result = alpha_scaled;
-    if (_linearModule->bias.defined()) {
-        torch::Tensor bias = _linearModule->bias
-            .to(torch::TensorOptions().dtype(torch::kFloat32).device(device));
-        result = result + bias;
+    // Use cached weight/bias (alpha already baked into _cached_weight)
+    ensureWeightsOnDevice(device);
+
+    // y = (alpha * W) * x + bias
+    torch::Tensor result = torch::matmul(inputFloat, _cached_weight.t());
+
+    if (_cached_bias.defined()) {
+        result = result + _cached_bias;
     }
-    
+
     return result;
 }
 
@@ -100,6 +93,29 @@ void BoundedLinearNode::moveToDevice(const torch::Device& device)
 {
     BoundedTorchNode::moveToDevice(device);
     _linearModule->to(device);
+    // Invalidate cache - will be repopulated on next use
+    _cached_weight = torch::Tensor();
+    _cached_bias = torch::Tensor();
+}
+
+void BoundedLinearNode::ensureWeightsOnDevice(const torch::Device& device) const
+{
+    // Fast path: already cached on the right device
+    if (_cached_weight.defined() && _cached_device == device) {
+        return;
+    }
+
+    // Cache weight and bias on target device as float32.
+    // _alpha is baked into the cached weight since it's a constant set at construction
+    // and never modified. This avoids a scalar multiply on every use.
+    auto options = torch::TensorOptions().dtype(torch::kFloat32).device(device);
+    _cached_weight = (_alpha * _linearModule->weight).to(options).contiguous();
+    if (_linearModule->bias.defined()) {
+        _cached_bias = _linearModule->bias.to(options);
+    } else {
+        _cached_bias = torch::Tensor();
+    }
+    _cached_device = device;
 }
 
 void BoundedLinearNode::boundBackward(
@@ -124,16 +140,11 @@ void BoundedLinearNode::boundBackward(
     torch::Tensor last_lA_tensor = last_lA.asTensor();
     torch::Tensor last_uA_tensor = last_uA.asTensor();
 
-    // Extract weight and bias from the linear module on the same device as A
+    // Use cached weight/bias on the same device as A (alpha already baked into _cached_weight)
     const auto device = last_lA_tensor.device();
-    auto weight = _linearModule->weight
-        .to(torch::TensorOptions().dtype(torch::kFloat32).device(device));
-    auto bias = _linearModule->bias.defined()
-        ? _linearModule->bias.to(torch::TensorOptions().dtype(torch::kFloat32).device(device))
-        : torch::Tensor();
-
-    // Scale weight by alpha
-    weight = _alpha * weight;
+    ensureWeightsOnDevice(device);
+    const auto& weight = _cached_weight;
+    const auto& bias = _cached_bias;
     
     // For linear layers, A matrices are computed as: A = last_A @ weight
     // where last_A represents the transformation from final output to current layer input
@@ -150,19 +161,16 @@ void BoundedLinearNode::boundBackward(
     auto projectA = [&](const torch::Tensor& A_in) -> torch::Tensor {
         if (!A_in.defined()) return torch::Tensor();
         if (A_in.dim() == 3) {
-            long spec_dim = A_in.size(0);
-            long batch_dim = A_in.size(1);
             long output_features = A_in.size(2);
-            long input_features = weight.size(1);
             if (weight.size(0) != output_features) {
                 std::ostringstream oss;
                 oss << "BoundedLinearNode::boundBackward: dimension mismatch - A matrix has " << output_features
                     << " features but weight has " << weight.size(0) << " output features";
                 throw std::runtime_error(oss.str());
             }
-            torch::Tensor A_2d = A_in.reshape({spec_dim * batch_dim, output_features});
-            A_2d = torch::matmul(A_2d, weight);
-            return A_2d.reshape({spec_dim, batch_dim, input_features});
+            // torch::matmul handles 3D×2D broadcasting natively:
+            // [spec, batch, out_features] @ [out_features, in_features] -> [spec, batch, in_features]
+            return torch::matmul(A_in, weight);
         } else if (A_in.dim() == 2) {
             long spec_dim = A_in.size(0);
             long features = A_in.size(1);
@@ -233,31 +241,23 @@ BoundedTensor<torch::Tensor> BoundedLinearNode::computeIntervalBoundPropagation(
     torch::Tensor inputLowerBound = inputBoundsPair.lower().to(torch::kFloat32);
     torch::Tensor inputUpperBound = inputBoundsPair.upper().to(torch::kFloat32);
     const auto device = inputLowerBound.device();
-    
+
     // Set input size from input bounds if not already set
     if (_input_size == 0 && inputLowerBound.defined()) {
         setInputSize(inputLowerBound.numel());
     }
-    
-    // Extract weight and bias
-    auto weight = _linearModule->weight
-        .to(torch::TensorOptions().dtype(torch::kFloat32).device(device));
-    auto bias = _linearModule->bias.defined()
-        ? _linearModule->bias.to(torch::TensorOptions().dtype(torch::kFloat32).device(device))
-        : torch::Tensor();
-    
-    // Scale weight by alpha
-    weight = _alpha * weight;
-    
-    // Compute IBP bounds: y = alpha * (W * x + b)
+
+    // Use cached weight/bias (alpha already baked in)
+    ensureWeightsOnDevice(device);
+
+    // Compute IBP bounds: y = (alpha * W) * x + bias
     torch::Tensor lowerBound = computeLinearIBPLowerBound(inputLowerBound, inputUpperBound);
     torch::Tensor upperBound = computeLinearIBPUpperBound(inputLowerBound, inputUpperBound);
-    
+
     // Add bias if defined
-    if (bias.defined()) {
-        torch::Tensor bias_scaled = _alpha * bias;
-        lowerBound = lowerBound + bias_scaled;
-        upperBound = upperBound + bias_scaled;
+    if (_cached_bias.defined()) {
+        lowerBound = lowerBound + _cached_bias;
+        upperBound = upperBound + _cached_bias;
     }
     
     // Set output size from computed bounds if not already set
@@ -310,57 +310,33 @@ void BoundedLinearNode::setOutputSize(unsigned size) {
 // IBP computation methods
 torch::Tensor BoundedLinearNode::computeLinearIBPLowerBound(const torch::Tensor& inputLowerBound, const torch::Tensor& inputUpperBound) {
     const auto device = inputLowerBound.device();
-    auto weight = _linearModule->weight
-        .to(torch::TensorOptions().dtype(torch::kFloat32).device(device));
-    weight = _alpha * weight;
-    
-    // Convert input tensors to float32 if needed
-    torch::Tensor inputLower = inputLowerBound
-        .to(torch::TensorOptions().dtype(torch::kFloat32).device(device));
-    torch::Tensor inputUpper = inputUpperBound
-        .to(torch::TensorOptions().dtype(torch::kFloat32).device(device));
-    
-    // For linear layers, IBP is straightforward
+    // Use cached weight (alpha already baked in, already on correct device)
+    ensureWeightsOnDevice(device);
+    const auto& weight = _cached_weight;
+
     // y_lower = W_positive * x_lower + W_negative * x_upper
     torch::Tensor W_positive = torch::clamp(weight, 0);
     torch::Tensor W_negative = torch::clamp(weight, std::numeric_limits<float>::lowest(), 0);
-    
-    // Fix: Use weight directly, not transpose
-    torch::Tensor term1 = torch::matmul(inputLower, weight.t());
-    torch::Tensor term2 = torch::matmul(inputUpper, weight.t());
-    
-    // For lower bound: use positive weights with lower input, negative weights with upper input
-    torch::Tensor positive_contribution = torch::matmul(inputLower, W_positive.t());
-    torch::Tensor negative_contribution = torch::matmul(inputUpper, W_negative.t());
-    
+
+    torch::Tensor positive_contribution = torch::matmul(inputLowerBound, W_positive.t());
+    torch::Tensor negative_contribution = torch::matmul(inputUpperBound, W_negative.t());
+
     return positive_contribution + negative_contribution;
 }
 
 torch::Tensor BoundedLinearNode::computeLinearIBPUpperBound(const torch::Tensor& inputLowerBound, const torch::Tensor& inputUpperBound) {
     const auto device = inputLowerBound.device();
-    auto weight = _linearModule->weight
-        .to(torch::TensorOptions().dtype(torch::kFloat32).device(device));
-    weight = _alpha * weight;
-    
-    // Convert input tensors to float32 if needed
-    torch::Tensor inputLower = inputLowerBound
-        .to(torch::TensorOptions().dtype(torch::kFloat32).device(device));
-    torch::Tensor inputUpper = inputUpperBound
-        .to(torch::TensorOptions().dtype(torch::kFloat32).device(device));
-    
-    // For linear layers, IBP is straightforward
+    // Use cached weight (alpha already baked in, already on correct device)
+    ensureWeightsOnDevice(device);
+    const auto& weight = _cached_weight;
+
     // y_upper = W_positive * x_upper + W_negative * x_lower
     torch::Tensor W_positive = torch::clamp(weight, 0);
     torch::Tensor W_negative = torch::clamp(weight, std::numeric_limits<float>::lowest(), 0);
-    
-    // Fix: Use weight directly, not transpose
-    torch::Tensor term1 = torch::matmul(inputUpper, weight.t());
-    torch::Tensor term2 = torch::matmul(inputLower, weight.t());
-    
-    // For upper bound: use positive weights with upper input, negative weights with lower input
-    torch::Tensor positive_contribution = torch::matmul(inputUpper, W_positive.t());
-    torch::Tensor negative_contribution = torch::matmul(inputLower, W_negative.t());
-    
+
+    torch::Tensor positive_contribution = torch::matmul(inputUpperBound, W_positive.t());
+    torch::Tensor negative_contribution = torch::matmul(inputLowerBound, W_negative.t());
+
     return positive_contribution + negative_contribution;
 }
 

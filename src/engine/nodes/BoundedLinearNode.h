@@ -62,6 +62,14 @@ public:
 private:
     torch::nn::Linear _linearModule;
     float _alpha;
+
+    // Cached weight/bias on target device (avoids repeated .to(device) calls)
+    mutable torch::Tensor _cached_weight;    // alpha * weight, on target device
+    mutable torch::Tensor _cached_bias;      // bias on target device (or undefined)
+    mutable torch::Device _cached_device{torch::kCPU};
+
+    // Ensure cached weight/bias are on the given device. Fast no-op if already cached.
+    void ensureWeightsOnDevice(const torch::Device& device) const;
 };
 
 } // namespace NLR

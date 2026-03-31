@@ -62,6 +62,9 @@ public:
     torch::Tensor getVar() const { return _var; }
     float getEps() const { return _eps; }
 
+    // Cached 4D input shape from IBP / forward (e.g. [1, C, H, W])
+    const std::vector<int64_t>& getLastInputShape() const { return _last_input_shape; }
+
     torch::Tensor getTmpWeight(const torch::Tensor& like) const { return tmp_weight(like); }
     torch::Tensor getTmpBias(const torch::Tensor& like) const { return tmp_bias(like); }
 
@@ -74,6 +77,13 @@ private:
 
     // Cached shapes (from forward or IBP input bounds) to support reshape for flattened A tensors.
     std::vector<int64_t> _last_input_shape;
+
+    // Cached derived parameters on target device (avoids repeated .to(device) + sqrt per call)
+    mutable torch::Tensor _cached_tmp_weight;  // scale / sqrt(var + eps)
+    mutable torch::Tensor _cached_tmp_bias;    // bias - mean * tmp_weight
+    mutable torch::Device _cached_device{torch::kCPU};
+
+    void ensureCachedParams(const torch::Device& device) const;
 
     torch::Tensor tmp_weight(const torch::Tensor& like) const;
     torch::Tensor tmp_bias(const torch::Tensor& like) const;

@@ -432,12 +432,15 @@ torch::Tensor Patches::patches_to_matrix(
 
         // Fill at unstable positions
         // idx[1] = out_h indices, idx[2] = out_w indices
+        // Batch-extract indices to CPU once to avoid per-element GPU synchronization
+        auto h_idx_cpu = idx[1].to(torch::kCPU);
+        auto w_idx_cpu = idx[2].to(torch::kCPU);
+        auto h_acc = h_idx_cpu.accessor<int64_t, 1>();
+        auto w_acc = w_idx_cpu.accessor<int64_t, 1>();
         for (int64_t i = 0; i < unstable_size; ++i) {
-            int64_t h_idx = idx[1][i].item<int64_t>();
-            int64_t w_idx = idx[2][i].item<int64_t>();
             using namespace torch::indexing;
             matrix_strided.index_put_(
-                {Slice(), i, h_idx, w_idx, Slice(), Slice(), Slice()},
+                {Slice(), i, h_acc[i], w_acc[i], Slice(), Slice(), Slice()},
                 pieces_transposed.index({Slice(), i, Slice(), Slice(), Slice()})
             );
         }

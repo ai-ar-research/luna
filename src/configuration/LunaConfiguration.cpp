@@ -39,6 +39,7 @@ bool LunaConfiguration::STOP_ALPHA_ON_VERIFIED = true;
 // CROWN settings
 bool LunaConfiguration::ENABLE_FIRST_LINEAR_IBP = true;
 bool LunaConfiguration::USE_STANDARD_CROWN = true;
+bool LunaConfiguration::USE_PATCHES_MODE = true;
 
 // Runtime options
 int LunaConfiguration::VERBOSITY = 0;
@@ -136,6 +137,7 @@ void LunaConfiguration::resetToDefaults()
     // CROWN settings
     ENABLE_FIRST_LINEAR_IBP = true;
     USE_STANDARD_CROWN = true;
+    USE_PATCHES_MODE = true;
 
     // Runtime options
     VERBOSITY = 2;
@@ -188,6 +190,7 @@ void LunaConfiguration::print()
     printf("\nCROWN Settings:\n");
     printf("  ENABLE_FIRST_LINEAR_IBP: %s\n", ENABLE_FIRST_LINEAR_IBP ? "true" : "false");
     printf("  USE_STANDARD_CROWN: %s\n", USE_STANDARD_CROWN ? "true" : "false");
+    printf("  USE_PATCHES_MODE: %s\n", USE_PATCHES_MODE ? "true" : "false");
     
     // Runtime options
     printf("\nRuntime Options:\n");
@@ -362,6 +365,13 @@ void LunaConfiguration::parseArgs(int argc, char** argv)
         // CROWN-IBP
         else if (arg == "--crown-ibp") {
             USE_STANDARD_CROWN = false;
+        }
+        // Patches mode for conv backward
+        else if (arg == "--patches") {
+            USE_PATCHES_MODE = true;
+        }
+        else if (arg == "--no-patches") {
+            USE_PATCHES_MODE = false;
         }
         // Help
         else if (arg == "--help" || arg == "-h") {

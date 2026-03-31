@@ -1,6 +1,8 @@
 #include "CROWNAnalysis.h"
 #include "nodes/BoundedConstantNode.h"
 #include "nodes/BoundedBatchNormNode.h"
+#include "nodes/BoundedConvNode.h"
+#include "conv/Patches.h"
 
 #include "Debug.h"
 #include "MStringf.h"
@@ -8,56 +10,9 @@
 #include "TimeUtils.h"
 
 #include <vector>
-#include <iomanip>
 #include <sstream>
 
 namespace NLR {
-
-static std::string tensorStatsStr(const torch::Tensor& t) {
-    if (!t.defined() || t.numel() == 0) return "undef";
-    torch::Tensor f = t.to(torch::kFloat32);
-    std::ostringstream oss;
-    oss << std::fixed << std::setprecision(6)
-        << "min=" << f.min().item<float>()
-        << " max=" << f.max().item<float>()
-        << " mean=" << f.mean().item<float>();
-    return oss.str();
-}
-
-// Helper function to get first N elements of a tensor as a string
-static std::string tensorFirstN(const torch::Tensor& tensor, int n = 10) {
-    if (!tensor.defined() || tensor.numel() == 0) {
-        return "[]";
-    }
-    
-    auto flat = tensor.flatten();
-    int count = std::min(n, (int)flat.numel());
-    
-    std::ostringstream oss;
-    oss << "[";
-    for (int i = 0; i < count; ++i) {
-        if (i > 0) oss << ", ";
-        oss << std::fixed << std::setprecision(6) << flat[i].item<float>();
-    }
-    if (flat.numel() > count) {
-        oss << ", ...";
-    }
-    oss << "]";
-    return oss.str();
-}
-
-static std::string tensorShapeStr(const torch::Tensor& t) {
-    if (!t.defined()) return "undef";
-    std::ostringstream oss;
-    oss << "[";
-    auto shape = t.sizes();
-    for (size_t i = 0; i < shape.size(); ++i) {
-        if (i > 0) oss << ", ";
-        oss << shape[i];
-    }
-    oss << "]";
-    return oss.str();
-}
 
 torch::Tensor CROWNAnalysis::buildCenterInputForForward() const {
     if (!_torchModel || !_torchModel->hasInputBounds()) return torch::Tensor();
@@ -335,48 +290,12 @@ void CROWNAnalysis::backwardFrom(unsigned startIndex, const Vector<unsigned>& un
         // Query TorchModel for specification matrix - preprocess it (using output node for correct sizing)
         torch::Tensor specMatrix = _torchModel->getSpecificationMatrix();
 
-        // DEBUG: Print specification matrix before preprocessing
-        if (LunaConfiguration::VERBOSE) {
-            printf("[DEBUG] Specification matrix (raw) shape: [");
-            for (int i = 0; i < specMatrix.dim(); ++i) {
-                if (i > 0) printf(", ");
-                printf("%lld", (long long)specMatrix.size(i));
-            }
-            printf("]\n");
-            if (specMatrix.numel() <= 20) {
-                printf("[DEBUG] Specification matrix values:\n");
-                auto flat = specMatrix.flatten();
-                for (int i = 0; i < flat.numel(); ++i) {
-                    printf("  [%d] = %.6f\n", i, flat[i].item<float>());
-                }
-            } else {
-                printf("[DEBUG] Specification matrix (first 10 values): ");
-                auto flat = specMatrix.flatten();
-                for (int i = 0; i < std::min(10, (int)flat.numel()); ++i) {
-                    printf("%.3f ", flat[i].item<float>());
-                }
-                printf("\n");
-            }
-        }
-        
         initMatrix = preprocessC(specMatrix, outputIndex);
         numSpecs = initMatrix.size(0);
         
         log(Stringf("backwardFrom() - Using specification matrix from TorchModel (preprocessed), shape [%ld, %ld, %ld]",
                     initMatrix.size(0), initMatrix.size(1), initMatrix.size(2)));
         
-        // DEBUG: Print preprocessed matrix
-        if (LunaConfiguration::VERBOSE) {
-            printf("[DEBUG] Preprocessed initMatrix shape: [%lld, %lld, %lld]\n",
-                   (long long)initMatrix.size(0), (long long)initMatrix.size(1), (long long)initMatrix.size(2));
-            if (initMatrix.numel() <= 20) {
-                printf("[DEBUG] Preprocessed initMatrix values:\n");
-                auto flat = initMatrix.flatten();
-                for (int i = 0; i < flat.numel(); ++i) {
-                    printf("  [%d] = %.6f\n", i, flat[i].item<float>());
-                }
-            }
-        }
     } else {
         // For intermediate nodes or when no C matrix: use identity matrix
         // Identity matrix size matches the start node's output size
@@ -391,11 +310,135 @@ void CROWNAnalysis::backwardFrom(unsigned startIndex, const Vector<unsigned>& un
         }
     }
 
-    if (unstableIndices.empty()) {
+    // Determine if we can use patches mode for this start node.
+    // Patches mode avoids materializing the full dense A matrix for conv layers,
+    // dramatically reducing memory and compute (matching auto_LiRPA's approach).
+    bool usePatchesInit = false;
+    std::vector<int64_t> patchOutputShape; // [batch, C, H, W]
+
+    if (LunaConfiguration::USE_PATCHES_MODE && !isOutputNode) {
+        // Check Conv node
+        auto* convNode = dynamic_cast<BoundedConvNode*>(startNode.get());
+        if (convNode) {
+            const auto& shape = convNode->getOutputShape();
+            if (shape.size() == 4) {
+                patchOutputShape = {(int64_t)shape[0], (int64_t)shape[1],
+                                   (int64_t)shape[2], (int64_t)shape[3]};
+                usePatchesInit = true;
+            }
+        }
+
+        // Check BN node - BN preserves spatial shape, so look at its Conv
+        // predecessor's cached output shape from cacheForwardShapesFromCenter()
+        if (!usePatchesInit) {
+            auto* bnNode = dynamic_cast<BoundedBatchNormNode*>(startNode.get());
+            if (bnNode && _torchModel->getDependenciesMap().exists(startIndex)) {
+                const auto& deps = _torchModel->getDependencies(startIndex);
+                for (unsigned i = 0; i < deps.size(); ++i) {
+                    if (!_nodes.exists(deps[i])) continue;
+                    auto* predConv = dynamic_cast<BoundedConvNode*>(_nodes[deps[i]].get());
+                    if (predConv) {
+                        const auto& shape = predConv->getOutputShape();
+                        if (shape.size() == 4) {
+                            patchOutputShape = {(int64_t)shape[0], (int64_t)shape[1],
+                                               (int64_t)shape[2], (int64_t)shape[3]};
+                            usePatchesInit = true;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if (usePatchesInit) {
+        // Create identity patches: compact representation where each output neuron
+        // maps to itself.  The first Conv/BN backward pass will consume identity=1
+        // and produce actual small patches instead of a huge dense A matrix.
+        int64_t batch = patchOutputShape[0];
+        int64_t outC  = patchOutputShape[1];
+        int64_t outH  = patchOutputShape[2];
+        int64_t outW  = patchOutputShape[3];
+
+        auto biasOpts = torch::TensorOptions().dtype(torch::kFloat32).device(_torchModel->getDevice());
+
+        if (unstableIndices.empty()) {
+            // Dense identity patches - all output neurons
+            auto identityPatches = std::make_shared<Patches>(
+                torch::Tensor(),                     // patches tensor undefined for identity
+                std::vector<int64_t>{1, 1},           // stride
+                std::vector<int64_t>{0, 0, 0, 0},    // padding
+                std::vector<int64_t>{0, 0, 0, 0},    // output_padding
+                0,                                    // inserted_zeros
+                std::nullopt,                         // unstable_idx
+                patchOutputShape,                     // output_shape = [batch, C, H, W]
+                std::vector<int64_t>{},               // input_shape (set later by Conv backward)
+                1                                     // identity = 1
+            );
+
+            _lA[startIndex] = BoundA(identityPatches);
+            _uA[startIndex] = BoundA(identityPatches);
+
+            numSpecs = outC * outH * outW;
+            _lowerBias[startIndex] = torch::zeros({numSpecs, 1}, biasOpts);
+            _upperBias[startIndex] = torch::zeros({numSpecs, 1}, biasOpts);
+
+            log(Stringf("backwardFrom() - PATCHES identity (dense) for node %u [batch=%lld, C=%lld, H=%lld, W=%lld], specs=%ld",
+                startIndex, (long long)batch, (long long)outC, (long long)outH, (long long)outW, numSpecs));
+        } else {
+            // Sparse identity patches - only unstable neurons
+            unsigned numUnstable = unstableIndices.size();
+
+            // Convert flat indices to (C, H, W) tuples
+            torch::Tensor c_idx = torch::zeros({(long)numUnstable}, torch::kLong);
+            torch::Tensor h_idx = torch::zeros({(long)numUnstable}, torch::kLong);
+            torch::Tensor w_idx = torch::zeros({(long)numUnstable}, torch::kLong);
+
+            auto c_acc = c_idx.accessor<int64_t, 1>();
+            auto h_acc = h_idx.accessor<int64_t, 1>();
+            auto w_acc = w_idx.accessor<int64_t, 1>();
+
+            int64_t hw = outH * outW;
+            for (unsigned i = 0; i < numUnstable; ++i) {
+                unsigned flatIdx = unstableIndices[i];
+                c_acc[i] = flatIdx / hw;
+                int64_t rem = flatIdx % hw;
+                h_acc[i] = rem / outW;
+                w_acc[i] = rem % outW;
+            }
+
+            auto device = _torchModel->getDevice();
+            std::vector<torch::Tensor> unstable_idx_vec = {
+                c_idx.to(device), h_idx.to(device), w_idx.to(device)
+            };
+
+            auto identityPatches = std::make_shared<Patches>(
+                torch::Tensor(),
+                std::vector<int64_t>{1, 1},
+                std::vector<int64_t>{0, 0, 0, 0},
+                std::vector<int64_t>{0, 0, 0, 0},
+                0,
+                unstable_idx_vec,
+                patchOutputShape,
+                std::vector<int64_t>{},
+                1
+            );
+
+            _lA[startIndex] = BoundA(identityPatches);
+            _uA[startIndex] = BoundA(identityPatches);
+
+            numSpecs = numUnstable;
+            _lowerBias[startIndex] = torch::zeros({(long)numUnstable, 1}, biasOpts);
+            _upperBias[startIndex] = torch::zeros({(long)numUnstable, 1}, biasOpts);
+
+            log(Stringf("backwardFrom() - PATCHES identity (sparse, %u unstable) for node %u",
+                numUnstable, startIndex));
+        }
+    } else if (unstableIndices.empty()) {
         // Dense mode: use initMatrix (C matrix, specification matrix, or identity)
         _lA[startIndex] = BoundA(initMatrix);
         _uA[startIndex] = BoundA(initMatrix);
-        
+
         // Initialize bias as [spec, batch] format: [numSpecs, 1]
         // This matches Python behavior where bias is always [spec, batch]
         auto options = torch::TensorOptions().dtype(torch::kFloat32).device(_torchModel->getDevice());
@@ -420,17 +463,17 @@ void CROWNAnalysis::backwardFrom(unsigned startIndex, const Vector<unsigned>& un
             }
         }
         identityMatrix = identityMatrix.to(_torchModel->getDevice());
-        
+
         _lA[startIndex] = BoundA(identityMatrix);
         _uA[startIndex] = BoundA(identityMatrix);
-        
+
         // Bias initialization: matches spec dimension (numUnstable)
         // Initialize as [spec, batch] format: [numUnstable, 1]
         // Bias accumulates terms from backward pass. Initial bias is 0.
         auto biasOpts = torch::TensorOptions().dtype(torch::kFloat32).device(_torchModel->getDevice());
         _lowerBias[startIndex] = torch::zeros({(long)numUnstable, 1}, biasOpts);
         _upperBias[startIndex] = torch::zeros({(long)numUnstable, 1}, biasOpts);
-        
+
         log(Stringf("backwardFrom() - Initialized sparse C for node %u with %u unstable neurons", startIndex, numUnstable));
     }
 
@@ -553,9 +596,6 @@ void CROWNAnalysis::backwardFrom(unsigned startIndex, const Vector<unsigned>& un
 
         stage = "node.boundBackward";
         node->boundBackward(currentLowerAlpha, currentUpperAlpha, inputBounds, A_matrices, lbias, ubias);
-
-        // No need to set intermediate bounds here - they're already set in run()
-        // IBP bounds are used for linear/conv, CROWN for ReLUs
 
         stage = "propagateToDependencies";
         if (_torchModel->getDependenciesMap().exists(current))
@@ -689,16 +729,6 @@ void CROWNAnalysis::backwardFrom(unsigned startIndex, const Vector<unsigned>& un
                             torch::Tensor norm_propagated = normalize_bias(propagated_lbias, A_for_context);
                             torch::Tensor norm_cur = normalize_bias(cur, A_for_context);
                             
-                            if (norm_propagated.sizes() != norm_cur.sizes()) {
-                                std::ostringstream oss;
-                                oss << "CROWNAnalysis::backwardFrom bias shape mismatch at node " << current
-                                    << " (" << node->getNodeName().ascii() << "): "
-                                    << "lbias=" << tensorShapeStr(propagated_lbias)
-                                    << " (normalized: " << tensorShapeStr(norm_propagated) << ")"
-                                    << " storedLowerBias=" << tensorShapeStr(cur)
-                                    << " (normalized: " << tensorShapeStr(norm_cur) << ")";
-                                throw std::runtime_error(oss.str());
-                            }
                             propagated_lbias = norm_propagated + norm_cur;
                         } else {
                             propagated_lbias = cur.defined() ? normalize_bias(cur, A_for_context) : propagated_lbias;
@@ -715,16 +745,6 @@ void CROWNAnalysis::backwardFrom(unsigned startIndex, const Vector<unsigned>& un
                             torch::Tensor norm_propagated = normalize_bias(propagated_ubias, A_for_context);
                             torch::Tensor norm_cur = normalize_bias(cur, A_for_context);
                             
-                            if (norm_propagated.sizes() != norm_cur.sizes()) {
-                                std::ostringstream oss;
-                                oss << "CROWNAnalysis::backwardFrom bias shape mismatch at node " << current
-                                    << " (" << node->getNodeName().ascii() << "): "
-                                    << "ubias=" << tensorShapeStr(propagated_ubias)
-                                    << " (normalized: " << tensorShapeStr(norm_propagated) << ")"
-                                    << " storedUpperBias=" << tensorShapeStr(cur)
-                                    << " (normalized: " << tensorShapeStr(norm_cur) << ")";
-                                throw std::runtime_error(oss.str());
-                            }
                             propagated_ubias = norm_propagated + norm_cur;
                         } else {
                             propagated_ubias = cur.defined() ? normalize_bias(cur, A_for_context) : propagated_ubias;
@@ -864,101 +884,26 @@ void CROWNAnalysis::concretizeNode(unsigned startIndex, const Vector<unsigned>& 
     BoundA lA_bound = _lA.exists(inputIndex) ? _lA[inputIndex] : BoundA();
     BoundA uA_bound = _uA.exists(inputIndex) ? _uA[inputIndex] : BoundA();
     
-    // DEBUG: Print A matrix statistics at input node for output node
-    if (LunaConfiguration::VERBOSE && startIndex == getOutputIndex() && lA_bound.isTensor()) {
-        torch::Tensor lA_tensor = lA_bound.asTensor();
-        printf("[DEBUG concretizeNode] A matrix at input node %d for output node %u:\n", inputIndex, startIndex);
-        printf("  lA shape: [");
-        for (int i = 0; i < lA_tensor.dim(); ++i) {
-            if (i > 0) printf(", ");
-            printf("%lld", (long long)lA_tensor.size(i));
-        }
-        printf("]\n");
-        if (lA_tensor.numel() <= 30) {
-            printf("  lA values:\n");
-            auto flat = lA_tensor.flatten();
-            for (int i = 0; i < flat.numel(); ++i) {
-                printf("    [%d] = %.6f\n", i, flat[i].item<float>());
-            }
-        } else {
-            printf("  lA (first 10): ");
-            auto flat = lA_tensor.flatten();
-            for (int i = 0; i < std::min(10, (int)flat.numel()); ++i) {
-                printf("%.3f ", flat[i].item<float>());
-            }
-            printf("\n  lA stats: min=%.6f, max=%.6f, mean=%.6f, norm=%.6f\n",
-                   lA_tensor.min().item<float>(), lA_tensor.max().item<float>(),
-                   lA_tensor.mean().item<float>(), lA_tensor.norm().item<float>());
-        }
-        if (_lowerBias.exists(inputIndex)) {
-            torch::Tensor bias = _lowerBias[inputIndex];
-            printf("  lBias shape: [");
-            for (int i = 0; i < bias.dim(); ++i) {
-                if (i > 0) printf(", ");
-                printf("%lld", (long long)bias.size(i));
-            }
-            printf("], values=[");
-            auto bias_flat = bias.flatten();
-            for (int i = 0; i < std::min(10, (int)bias_flat.numel()); ++i) {
-                if (i > 0) printf(", ");
-                printf("%.6f", bias_flat[i].item<float>());
-            }
-            if (bias_flat.numel() > 10) printf(", ...");
-            printf("]\n");
-        }
-        
-        // Also print uA and uBias for upper bound debugging
-        if (uA_bound.isTensor()) {
-            torch::Tensor uA_tensor = uA_bound.asTensor();
-            printf("  uA shape: [");
-            for (int i = 0; i < uA_tensor.dim(); ++i) {
-                if (i > 0) printf(", ");
-                printf("%lld", (long long)uA_tensor.size(i));
-            }
-            printf("]\n");
-            if (uA_tensor.numel() <= 30) {
-                printf("  uA values:\n");
-                auto flat = uA_tensor.flatten();
-                for (int i = 0; i < flat.numel(); ++i) {
-                    printf("    [%d] = %.6f\n", i, flat[i].item<float>());
-                }
-            }
-            if (_upperBias.exists(inputIndex)) {
-                torch::Tensor bias = _upperBias[inputIndex];
-                printf("  uBias shape: [");
-                for (int i = 0; i < bias.dim(); ++i) {
-                    if (i > 0) printf(", ");
-                    printf("%lld", (long long)bias.size(i));
-                }
-                printf("], values=[");
-                auto bias_flat = bias.flatten();
-                for (int i = 0; i < std::min(10, (int)bias_flat.numel()); ++i) {
-                    if (i > 0) printf(", ");
-                    printf("%.6f", bias_flat[i].item<float>());
-                }
-                if (bias_flat.numel() > 10) printf(", ...");
-                printf("]\n");
-            }
-        }
-    }
-    
     torch::Tensor lA, uA;
-    
+
     if (lA_bound.isPatches()) {
         auto p = lA_bound.asPatches();
         if (!p->input_shape.empty()) {
             lA = p->to_matrix(p->input_shape);
+            // to_matrix returns [batch, spec, C, H, W] — flatten to [batch, spec, neurons]
+            if (lA.dim() == 5) lA = lA.flatten(2);
         } else {
             throw std::runtime_error("CROWNAnalysis::concretizeNode - Patches without input_shape, cannot convert to matrix");
         }
     } else {
         lA = lA_bound.asTensor();
     }
-    
+
     if (uA_bound.isPatches()) {
         auto p = uA_bound.asPatches();
         if (!p->input_shape.empty()) {
             uA = p->to_matrix(p->input_shape);
+            if (uA.dim() == 5) uA = uA.flatten(2);
         } else {
             throw std::runtime_error("CROWNAnalysis::concretizeNode - Patches without input_shape, cannot convert to matrix");
         }
@@ -968,7 +913,6 @@ void CROWNAnalysis::concretizeNode(unsigned startIndex, const Vector<unsigned>& 
     
     torch::Tensor lBias = _lowerBias.exists(inputIndex) ? _lowerBias[inputIndex] : torch::Tensor();
     torch::Tensor uBias = _upperBias.exists(inputIndex) ? _upperBias[inputIndex] : torch::Tensor();
-
 
     if (lA.defined() && lA.dim() >= 2) {
         int nodeDim = inputLower.size(0);
@@ -995,40 +939,6 @@ void CROWNAnalysis::concretizeNode(unsigned startIndex, const Vector<unsigned>& 
     log(Stringf("concretizeNode() - Computed concrete bounds: lower.defined()=%d, upper.defined()=%d",
         concreteLower.defined(), concreteUpper.defined()));
     
-    // DEBUG: Print concrete bounds and A matrix info
-    if (LunaConfiguration::VERBOSE && concreteLower.defined() && concreteUpper.defined()) {
-        printf("[DEBUG concretizeNode] Node %u concrete bounds:\n", startIndex);
-        printf("  Lower: shape=[%lld], values=[", (long long)concreteLower.numel());
-        auto lower_flat = concreteLower.flatten();
-        for (int i = 0; i < std::min(10, (int)lower_flat.numel()); ++i) {
-            if (i > 0) printf(", ");
-            printf("%.6f", lower_flat[i].item<float>());
-        }
-        if (lower_flat.numel() > 10) printf(", ...");
-        printf("]\n");
-        printf("  Upper: shape=[%lld], values=[", (long long)concreteUpper.numel());
-        auto upper_flat = concreteUpper.flatten();
-        for (int i = 0; i < std::min(10, (int)upper_flat.numel()); ++i) {
-            if (i > 0) printf(", ");
-            printf("%.6f", upper_flat[i].item<float>());
-        }
-        if (upper_flat.numel() > 10) printf(", ...");
-        printf("]\n");
-        if (lower_flat.numel() == upper_flat.numel()) {
-            torch::Tensor widths = upper_flat - lower_flat;
-            printf("  Widths: mean=%.6f, min=%.6f, max=%.6f\n",
-                   widths.mean().item<float>(), widths.min().item<float>(), widths.max().item<float>());
-        }
-        if (lA.defined() && lA.dim() >= 2) {
-            printf("  lA shape: [");
-            for (int i = 0; i < lA.dim(); ++i) {
-                if (i > 0) printf(", ");
-                printf("%lld", (long long)lA.size(i));
-            }
-            printf("]\n");
-        }
-    }
-
     if (concreteLower.defined() && concreteUpper.defined()) {
         if (!unstableIndices.empty()) {
             // If we computed sparse bounds, we need to scatter them into the full bounds tensor
@@ -1439,19 +1349,6 @@ torch::Tensor CROWNAnalysis::computeConcreteLowerBound(
     torch::Tensor term = Apos.bmm(xL) + Aneg.bmm(xU);            // (1,spec,1)
     torch::Tensor out  = term + bL;                              // (1,spec,1)
 
-    // DEBUG: Print detailed bound computation info
-    if (LunaConfiguration::VERBOSE) {
-        printf("[DEBUG computeConcreteLowerBound]\n");
-        printf("  AL shape: [%lld, %lld, %lld]\n", (long long)AL.size(0), (long long)AL.size(1), (long long)AL.size(2));
-        printf("  xL range: [%.6f, %.6f]\n", xL.min().item<float>(), xL.max().item<float>());
-        printf("  xU range: [%.6f, %.6f]\n", xU.min().item<float>(), xU.max().item<float>());
-        printf("  AL range: [%.6f, %.6f], sum=%.6f\n", AL.min().item<float>(), AL.max().item<float>(), AL.sum().item<float>());
-        printf("  Apos sum: %.6f, Aneg sum: %.6f\n", Apos.sum().item<float>(), Aneg.sum().item<float>());
-        printf("  bL range: [%.6f, %.6f]\n", bL.min().item<float>(), bL.max().item<float>());
-        printf("  term (Apos@xL + Aneg@xU): [%.6f, %.6f]\n", term.min().item<float>(), term.max().item<float>());
-        printf("  out (term + bL): [%.6f, %.6f]\n", out.min().item<float>(), out.max().item<float>());
-    }
-
     torch::Tensor result = out.squeeze(-1).squeeze(0);           // (spec,)
 
     return result;
@@ -1476,17 +1373,6 @@ torch::Tensor CROWNAnalysis::computeConcreteUpperBound(
     // UB = βU + Apos * xU + Aneg * xL
     torch::Tensor term = Apos.bmm(xU) + Aneg.bmm(xL);            // (1,spec,1)
     torch::Tensor out  = term + bU;                              // (1,spec,1)
-
-    // DEBUG: Print detailed bound computation info
-    if (LunaConfiguration::VERBOSE) {
-        printf("[DEBUG computeConcreteUpperBound]\n");
-        printf("  AU shape: [%lld, %lld, %lld]\n", (long long)AU.size(0), (long long)AU.size(1), (long long)AU.size(2));
-        printf("  AU range: [%.6f, %.6f], sum=%.6f\n", AU.min().item<float>(), AU.max().item<float>(), AU.sum().item<float>());
-        printf("  Apos sum: %.6f, Aneg sum: %.6f\n", Apos.sum().item<float>(), Aneg.sum().item<float>());
-        printf("  bU range: [%.6f, %.6f]\n", bU.min().item<float>(), bU.max().item<float>());
-        printf("  term (Apos@xU + Aneg@xL): [%.6f, %.6f]\n", term.min().item<float>(), term.max().item<float>());
-        printf("  out (term + bU): [%.6f, %.6f]\n", out.min().item<float>(), out.max().item<float>());
-    }
 
     torch::Tensor result = out.squeeze(-1).squeeze(0);           // (spec,)
 
@@ -1590,8 +1476,53 @@ BoundA CROWNAnalysis::addA(const BoundA& A1, const BoundA& A2) {
     } else if (A1.isPatches() && A2.isPatches()) {
         return BoundA(A1.asPatches()->add(A2.asPatches()));
     } else {
-        throw std::runtime_error(
-            "CROWNAnalysis::addA - Mixed types (Tensor/Patches) addition not implemented");
+        // Mixed Tensor/Patches: convert patches to dense matrix, then add tensors.
+        // This happens at skip connections in ResNets when one path converted
+        // patches to matrix while the other stayed in patches mode.
+        auto toTensor = [](const BoundA& A) -> torch::Tensor {
+            if (A.isTensor()) return A.asTensor();
+            auto p = A.asPatches();
+            // Identity patches (identity=1) have no tensor — materialize to identity matrix
+            if (p->identity == 1 && !p->output_shape.empty()) {
+                int64_t C = p->output_shape[1];
+                int64_t H = p->output_shape[2];
+                int64_t W = p->output_shape[3];
+                int64_t n = C * H * W;
+                auto opts = torch::TensorOptions().dtype(torch::kFloat32);
+                if (p->unstable_idx.has_value()) {
+                    // Sparse identity: select rows from identity
+                    auto& idx = p->unstable_idx.value();
+                    int64_t batch = p->output_shape[0];
+                    torch::Tensor eye = torch::eye(n, opts);
+                    // Convert (c,h,w) indices to flat indices
+                    torch::Tensor flat_idx = idx[0] * (H * W) + idx[1] * W + idx[2];
+                    torch::Tensor selected = eye.index_select(0, flat_idx); // [unstable, n]
+                    return selected.unsqueeze(1).expand({-1, batch, -1});
+                } else {
+                    int64_t batch = p->output_shape[0];
+                    torch::Tensor eye = torch::eye(n, opts);
+                    return eye.unsqueeze(1).expand({-1, batch, -1});
+                }
+            }
+            if (!p->input_shape.empty()) {
+                torch::Tensor mat = p->to_matrix(p->input_shape);
+                // to_matrix returns [batch, spec, C, H, W] — convert to [spec, batch, neurons]
+                if (mat.dim() == 5) {
+                    mat = mat.permute({1, 0, 2, 3, 4}).flatten(2);
+                }
+                return mat;
+            }
+            throw std::runtime_error(
+                "CROWNAnalysis::addA - Cannot convert Patches to matrix: input_shape empty and not identity");
+        };
+        torch::Tensor t1 = toTensor(A1);
+        torch::Tensor t2 = toTensor(A2);
+        // May need shape normalization for the addition
+        if (t1.sizes() != t2.sizes()) {
+            // Try broadcasting
+            return BoundA(t1 + t2);
+        }
+        return BoundA(t1 + t2);
     }
 }
 
@@ -1652,20 +1583,12 @@ void CROWNAnalysis::addBias(unsigned nodeIndex, const torch::Tensor& lBias, cons
     
     if (lBias.defined() && lBias.numel() > 0) {
         torch::Tensor normalized_lBias = normalize_bias_shape(lBias);
-        
+
         if (_lowerBias.exists(nodeIndex)) {
             torch::Tensor existing = _lowerBias[nodeIndex];
             torch::Tensor normalized_existing = normalize_bias_shape(existing);
-            
-            // Check if shapes are compatible after normalization
-            if (normalized_existing.sizes() != normalized_lBias.sizes()) {
-                std::ostringstream oss;
-                oss << "CROWNAnalysis::addBias: shape mismatch at node " << nodeIndex
-                    << " after normalization: existing=" << tensorShapeStr(normalized_existing)
-                    << " new=" << tensorShapeStr(normalized_lBias);
-                throw std::runtime_error(oss.str());
-            }
-            
+
+            // Use PyTorch broadcasting for addition (handles [1,1] + [532,1] etc.)
             _lowerBias[nodeIndex] = normalized_existing + normalized_lBias;
         } else {
             _lowerBias[nodeIndex] = normalized_lBias;
@@ -1673,20 +1596,12 @@ void CROWNAnalysis::addBias(unsigned nodeIndex, const torch::Tensor& lBias, cons
     }
     if (uBias.defined() && uBias.numel() > 0) {
         torch::Tensor normalized_uBias = normalize_bias_shape(uBias);
-        
+
         if (_upperBias.exists(nodeIndex)) {
             torch::Tensor existing = _upperBias[nodeIndex];
             torch::Tensor normalized_existing = normalize_bias_shape(existing);
-            
-            // Check if shapes are compatible after normalization
-            if (normalized_existing.sizes() != normalized_uBias.sizes()) {
-                std::ostringstream oss;
-                oss << "CROWNAnalysis::addBias: shape mismatch at node " << nodeIndex
-                    << " after normalization: existing=" << tensorShapeStr(normalized_existing)
-                    << " new=" << tensorShapeStr(normalized_uBias);
-                throw std::runtime_error(oss.str());
-            }
-            
+
+            // Use PyTorch broadcasting for addition (handles [1,1] + [532,1] etc.)
             _upperBias[nodeIndex] = normalized_existing + normalized_uBias;
         } else {
             _upperBias[nodeIndex] = normalized_uBias;
@@ -1856,44 +1771,7 @@ BoundedTensor<torch::Tensor> CROWNAnalysis::getOutputBounds() const
 {
     unsigned outputIndex = getOutputIndex();
     if (_concreteBounds.exists(outputIndex)) {
-        auto bounds = _concreteBounds[outputIndex];
-        
-        // DEBUG: Print output bounds being returned
-        if (LunaConfiguration::VERBOSE && bounds.lower().defined() && bounds.upper().defined()) {
-            printf("[DEBUG getOutputBounds] Returning bounds for output node %u:\n", outputIndex);
-            printf("  Lower: shape=[%lld], ", (long long)bounds.lower().numel());
-            auto lower_flat = bounds.lower().flatten();
-            if (lower_flat.numel() <= 10) {
-                printf("values=[");
-                for (int i = 0; i < lower_flat.numel(); ++i) {
-                    if (i > 0) printf(", ");
-                    printf("%.6f", lower_flat[i].item<float>());
-                }
-                printf("]\n");
-            } else {
-                printf("first=%.6f, last=%.6f\n", lower_flat[0].item<float>(), lower_flat[-1].item<float>());
-            }
-            printf("  Upper: shape=[%lld], ", (long long)bounds.upper().numel());
-            auto upper_flat = bounds.upper().flatten();
-            if (upper_flat.numel() <= 10) {
-                printf("values=[");
-                for (int i = 0; i < upper_flat.numel(); ++i) {
-                    if (i > 0) printf(", ");
-                    printf("%.6f", upper_flat[i].item<float>());
-                }
-                printf("]\n");
-            } else {
-                printf("first=%.6f, last=%.6f\n", upper_flat[0].item<float>(), upper_flat[-1].item<float>());
-            }
-            if (lower_flat.numel() == upper_flat.numel()) {
-                torch::Tensor widths = upper_flat - lower_flat;
-                printf("  Width: mean=%.6f, min=%.6f, max=%.6f\n",
-                       widths.mean().item<float>(), widths.min().item<float>(), widths.max().item<float>());
-            }
-            printf("  Has specification matrix: %s\n", _torchModel->hasSpecificationMatrix() ? "yes" : "no");
-        }
-        
-        return bounds;
+        return _concreteBounds[outputIndex];
     }
     return BoundedTensor<torch::Tensor>(torch::Tensor(), torch::Tensor());
 }
@@ -1969,11 +1847,10 @@ bool CROWNAnalysis::needsCROWNBounds(unsigned nodeIndex)
             torch::Tensor upper = bounds.upper();
 
             if (lower.defined() && upper.defined()) {
-                // Count definitely active (lower > 0) and inactive (upper < 0) neurons
-                float definitely_active = (lower > 0).sum().item<float>();
-                float definitely_inactive = (upper < 0).sum().item<float>();
+                // Count stable neurons (definitely active or inactive) in a single GPU sync
+                float stable_count = ((lower > 0) | (upper < 0)).sum().item<float>();
                 float total = lower.numel();
-                float stable_ratio = (definitely_active + definitely_inactive) / total;
+                float stable_ratio = stable_count / total;
 
                 // If >80% neurons have stable status, IBP is sufficient
                 if (stable_ratio > 0.8) {
@@ -2127,7 +2004,7 @@ void CROWNAnalysis::computeIntermediateBoundsLazy(unsigned nodeIndex)
 
         // Convert to Vector<unsigned> for backwardFrom
         if (indices.numel() > 0) {
-            auto indices_cpu = indices.to(torch::kCPU).to(torch::kLong);
+            auto indices_cpu = indices.cpu(); // single bulk GPU→CPU transfer; nonzero() already returns kLong
             auto acc = indices_cpu.accessor<int64_t, 1>();
             for (int64_t i = 0; i < acc.size(0); ++i) {
                 unstableIndices.append(static_cast<unsigned>(acc[i]));

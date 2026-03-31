@@ -55,23 +55,30 @@ BoundedBatchNormNode::BoundedBatchNormNode(
     }
 }
 
+void BoundedBatchNormNode::ensureCachedParams(const torch::Device& device) const {
+    if (_cached_tmp_weight.defined() && _cached_device == device) {
+        return;
+    }
+    auto options = torch::TensorOptions().dtype(torch::kFloat32).device(device);
+    auto scale = _scale.to(options);
+    auto var = _var.to(options);
+    auto B = _bias.to(options);
+    auto mean = _mean.to(options);
+    _cached_tmp_weight = scale / torch::sqrt(var + _eps);
+    _cached_tmp_bias = B - mean * _cached_tmp_weight;
+    _cached_device = device;
+}
+
 torch::Tensor BoundedBatchNormNode::tmp_weight(const torch::Tensor& like) const {
-    // tmp_weight = scale / sqrt(var + eps)
     auto device = like.defined() ? like.device() : _scale.device();
-    auto dtype = torch::kFloat32;
-    auto scale = _scale.to(device).to(dtype);
-    auto var = _var.to(device).to(dtype);
-    return scale / torch::sqrt(var + _eps);
+    ensureCachedParams(device);
+    return _cached_tmp_weight;
 }
 
 torch::Tensor BoundedBatchNormNode::tmp_bias(const torch::Tensor& like) const {
-    // tmp_bias = B - mean * tmp_weight
     auto device = like.defined() ? like.device() : _scale.device();
-    auto dtype = torch::kFloat32;
-    auto B = _bias.to(device).to(dtype);
-    auto mean = _mean.to(device).to(dtype);
-    auto w = tmp_weight(like);
-    return B - mean * w;
+    ensureCachedParams(device);
+    return _cached_tmp_bias;
 }
 
 torch::Tensor BoundedBatchNormNode::broadcast_channel_param(const torch::Tensor& param, const torch::Tensor& x) const {
@@ -405,10 +412,70 @@ BoundA BoundedBatchNormNode::boundOneSidePatches(
     }
 
     auto patches = last_A.asPatches();
-    torch::Tensor P = patches->patches.to(torch::kFloat32);
 
-    auto w = tmp_weight(P); // [C]
-    auto b = tmp_bias(P);   // [C]
+    // Get BN parameters on the correct device
+    torch::Device device = _device;
+    if (inputBounds[0].lower().defined()) device = inputBounds[0].lower().device();
+    ensureCachedParams(device);
+    auto w = _cached_tmp_weight; // [C]
+    auto b = _cached_tmp_bias;   // [C]
+
+    // Handle identity patches (identity=1): materialize into diagonal channel-weight patches.
+    // This happens when backward starts at a BN node with patches mode enabled.
+    // Each output channel maps to the same input channel, scaled by BN weight.
+    if (patches->identity == 1) {
+        int64_t C = w.numel();
+        // output_shape convention: [batch, C, H, W]
+        int64_t batch = patches->output_shape[0];
+        int64_t out_h = patches->output_shape[2];
+        int64_t out_w = patches->output_shape[3];
+
+        // Diagonal: eye(C) * w -> [C, C], then reshape to patch format
+        torch::Tensor eye_w = torch::eye(C, torch::TensorOptions().dtype(torch::kFloat32).device(device))
+            * w.view({-1});
+
+        if (!patches->unstable_idx.has_value()) {
+            // Dense: [C, 1, 1, 1, C, 1, 1] -> expand to [C, batch, H, W, C, 1, 1]
+            torch::Tensor P_new = eye_w.view({C, 1, 1, 1, C, 1, 1})
+                .expand({C, batch, out_h, out_w, C, 1, 1}).contiguous();
+
+            // Bias: BN bias per channel -> [C, batch, H, W]
+            sum_bias = b.view({C, 1, 1, 1}).expand({C, batch, out_h, out_w}).contiguous();
+
+            return BoundA(patches->create_similar(
+                P_new,
+                std::vector<int64_t>{1, 1},
+                std::vector<int64_t>{0, 0, 0, 0},
+                std::vector<int64_t>{0, 0, 0, 0},
+                0,     // inserted_zeros
+                0      // identity = 0 (materialized)
+            ));
+        } else {
+            // Sparse: select unstable channels
+            auto& idx = patches->unstable_idx.value();
+            torch::Tensor P_new = eye_w.index_select(0, idx[0]); // [unstable, C]
+            P_new = P_new.view({(int64_t)idx[0].size(0), 1, C, 1, 1})
+                .expand({(int64_t)idx[0].size(0), batch, C, 1, 1}).contiguous();
+
+            // Bias for unstable channels: [unstable, batch]
+            sum_bias = b.index_select(0, idx[0]).unsqueeze(-1)
+                .expand({(int64_t)idx[0].size(0), batch}).contiguous();
+
+            return BoundA(patches->create_similar(
+                P_new,
+                std::vector<int64_t>{1, 1},
+                std::vector<int64_t>{0, 0, 0, 0},
+                std::vector<int64_t>{0, 0, 0, 0},
+                0,
+                0      // identity = 0
+            ));
+        }
+    }
+
+    // Non-identity patches: scale patches by BN weight along channel dim
+    torch::Tensor P = (patches->patches.scalar_type() == torch::kFloat32)
+                       ? patches->patches
+                       : patches->patches.to(torch::kFloat32);
 
     // Scale patches along channel dimension (dim = -3)
     std::vector<int64_t> view(P.dim(), 1);
@@ -416,11 +483,26 @@ BoundA BoundedBatchNormNode::boundOneSidePatches(
     torch::Tensor P_scaled = P * w.view(view);
 
     // Bias contribution: compute A * bias_map, matching auto_LiRPA's unfold+einsum logic
-    // Only 4D BN patches expected (conv-style): input shape [N,C,H,W]
     torch::Tensor in_l = inputBounds[0].lower();
     std::vector<int64_t> xshape = in_l.defined() ? in_l.sizes().vec() : _last_input_shape;
+    // If bounds are stored flat (1D/2D), use cached 4D shape from forward/IBP pass
+    if (xshape.size() < 4 && _last_input_shape.size() >= 4) {
+        xshape = _last_input_shape;
+    }
+    // If still flat, infer 4D shape from C and flat size
+    if (xshape.size() < 4 && xshape.size() >= 1) {
+        int64_t C = w.numel();
+        int64_t flat = xshape.back();
+        if (C > 0 && flat % C == 0) {
+            int64_t spatial = flat / C;
+            int64_t H = static_cast<int64_t>(std::sqrt(static_cast<double>(spatial)));
+            int64_t W = spatial / H;
+            if (H * W == spatial) {
+                xshape = {1, C, H, W};
+            }
+        }
+    }
     if (xshape.size() < 4) {
-        // Patches mode is only meaningful for conv-style tensors.
         sum_bias = torch::zeros({1}, P.options());
         return BoundA(patches->create_similar(P_scaled));
     }
@@ -444,32 +526,26 @@ BoundA BoundedBatchNormNode::boundOneSidePatches(
             sum_bias = torch::zeros({1}, P.options());
             return BoundA(patches->create_similar(P_scaled));
         }
-        // Select [out_h, out_w] using idx[1], idx[2]
-        // bias_unfolded: [1, out_h, out_w, C, kh, kw] -> [1, unstable, C, kh, kw]
-        torch::Tensor bias_sel = bias_unfolded.index({0, idx[1], idx[2]}); // [unstable, C, kh, kw] or [1, unstable, ...] depending on indexing
+        torch::Tensor bias_sel = bias_unfolded.index({0, idx[1], idx[2]});
         if (bias_sel.dim() == 4) {
-            bias_sel = bias_sel.unsqueeze(0); // [1, unstable, C, kh, kw]
+            bias_sel = bias_sel.unsqueeze(0);
         }
-        // Rearrange to [unstable, 1, C, kh, kw] then expand batch
-        bias_sel = bias_sel.permute({1, 0, 2, 3, 4}); // [unstable, 1, C, kh, kw]
-        bias_sel = bias_sel.expand({P_scaled.size(0), P_scaled.size(1), P_scaled.size(2), P_scaled.size(3), P_scaled.size(4)});
+        bias_sel = bias_sel.permute({1, 0, 2, 3, 4});
+        bias_sel = bias_sel.expand({P.size(0), P.size(1), P.size(2), P.size(3), P.size(4)});
 
-        // Multiply and sum over (C, kh, kw) -> [unstable, batch]
-        torch::Tensor sb = (P_scaled * bias_sel).sum({2, 3, 4});
+        // Use ORIGINAL P (before w scaling) for bias: sb = sum(A * b), not sum(A*w*b)
+        torch::Tensor sb = (P * bias_sel).sum({2, 3, 4});
         sum_bias = sb;
     } else {
         // Dense patches: expected P shape [out_c, batch, out_h, out_w, C, kh, kw]
-        torch::Tensor bias_ready = bias_unfolded.unsqueeze(0); // [1, out_h, out_w, C, kh, kw] -> [1,1,out_h,out_w,C,kh,kw]?
+        torch::Tensor bias_ready = bias_unfolded.unsqueeze(0);
         if (bias_ready.dim() == 7) {
-            // bias_unfolded already [1,out_h,out_w,C,kh,kw], unsqueeze gives [1,1,out_h,out_w,C,kh,kw]
-            // Broadcast on out_c dimension.
+            // Already [1, 1, out_h, out_w, C, kh, kw]
         } else if (bias_ready.dim() == 6) {
-            // If unfold returns [out_h,out_w,C,kh,kw] (shouldn't), fix it.
             bias_ready = bias_unfolded.unsqueeze(0).unsqueeze(0);
         }
-        // P_scaled: [out_c, batch, out_h, out_w, C, kh, kw]
-        // bias_ready: [1, 1, out_h, out_w, C, kh, kw]
-        torch::Tensor sb = (P_scaled * bias_ready).sum({-3, -2, -1}); // [out_c, batch, out_h, out_w]
+        // Use ORIGINAL P (before w scaling) for bias: sb = sum(A * b), not sum(A*w*b)
+        torch::Tensor sb = (P * bias_ready).sum({-3, -2, -1});
         sum_bias = sb;
     }
 
@@ -515,6 +591,9 @@ void BoundedBatchNormNode::moveToDevice(const torch::Device& device)
     _bias = _bias.to(device);
     _mean = _mean.to(device);
     _var = _var.to(device);
+    // Invalidate derived-param cache; rebuilt lazily on next use
+    _cached_tmp_weight = torch::Tensor();
+    _cached_tmp_bias = torch::Tensor();
 }
 
 } // namespace NLR

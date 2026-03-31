@@ -412,7 +412,7 @@ torch::Tensor AlphaCROWNAnalysis::computeOptimizedBounds(LunaConfiguration::Boun
     float currentLR = _learningRate;
     const unsigned early_stop_patience = LunaConfiguration::EARLY_STOP_PATIENCE;
     unsigned iterations_without_improvement = 0;
-    float best_loss = std::numeric_limits<float>::infinity();
+    torch::Tensor best_loss_tensor;  // GPU-side loss tracking (avoids per-iteration GPU→CPU sync)
 
     for (unsigned iter = 0; iter < _iteration; ++iter) {
         std::unique_ptr<torch::NoGradGuard> no_grad;
@@ -496,12 +496,20 @@ torch::Tensor AlphaCROWNAnalysis::computeOptimizedBounds(LunaConfiguration::Boun
             }
         }
 
-        float current_loss = loss.defined() ? std::abs(loss.item<float>()) : 0.0f;
-        if (improved || (loss.defined() && current_loss < best_loss)) {
-            best_loss = current_loss;
+        // Track loss improvement on GPU to avoid per-iteration GPU→CPU sync.
+        if (improved) {
+            if (loss.defined()) best_loss_tensor = loss.detach().abs();
             iterations_without_improvement = 0;
         } else if (loss.defined()) {
-            iterations_without_improvement++;
+            auto current_abs_loss = loss.detach().abs();
+            bool loss_improved = !best_loss_tensor.defined()
+                || (current_abs_loss < best_loss_tensor).item<bool>();
+            if (loss_improved) {
+                best_loss_tensor = current_abs_loss;
+                iterations_without_improvement = 0;
+            } else {
+                iterations_without_improvement++;
+            }
         }
 
         if (iterations_without_improvement >= early_stop_patience) {
@@ -876,10 +884,13 @@ std::vector<int> AlphaCROWNAnalysis::findImprovedIndices(const torch::Tensor& cu
         }
     }
 
-    auto improvedMask = perSpec.nonzero().flatten();
+    auto improvedMask = perSpec.nonzero().flatten().to(torch::kInt32).cpu().contiguous();
     if (improvedMask.numel() > 0) {
-        for (int64_t i = 0; i < improvedMask.size(0); ++i) {
-            improvedIndices.push_back(improvedMask[i].item<int>());
+        const int* data = improvedMask.data_ptr<int>();
+        int64_t n = improvedMask.size(0);
+        improvedIndices.reserve(static_cast<size_t>(n));
+        for (int64_t i = 0; i < n; ++i) {
+            improvedIndices.push_back(data[i]);
         }
     }
 

@@ -50,6 +50,7 @@ public:
     // CROWN settings
     static bool ENABLE_FIRST_LINEAR_IBP;
     static bool USE_STANDARD_CROWN;
+    static bool USE_PATCHES_MODE;
 
     // Runtime options
     static int VERBOSITY;
