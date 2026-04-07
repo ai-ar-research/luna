@@ -143,10 +143,6 @@ torch::Tensor Patches::matmul(const torch::Tensor& input, bool patch_abs,
     // Mirrors auto_LiRPA Patches.matmul (patches.py:285-320).
     // Uses inplace_unfold (zero-copy strided view) + einsum.
 
-    printf("[PATCHES_MATMUL] patches shape: [%lld", (long long)patches.size(0));
-    for (int d = 1; d < patches.dim(); ++d) printf(",%lld", (long long)patches.size(d));
-    printf("], sparse=%d, patch_abs=%d\n", unstable_idx.has_value() ? 1 : 0, patch_abs ? 1 : 0);
-
     torch::Tensor p = patches;
     if (patch_abs) {
         p = p.abs();
@@ -440,8 +436,6 @@ torch::Tensor Patches::patches_to_matrix(
         // Need to transpose to (batch, out_c, out_h, out_w, c, h, w)
         torch::Tensor pieces_transposed = p.permute({1, 0, 2, 3, 4, 5, 6});
 
-        printf("[PATCHES_TO_MATRIX] non-sparse vectorized: out=%lldx%lld, device=%s\n",
-               (long long)output_x, (long long)output_y, p.device().str().c_str());
         {
             using namespace torch::indexing;
             auto dev_opts = torch::TensorOptions().dtype(torch::kLong).device(p.device());
@@ -494,8 +488,6 @@ torch::Tensor Patches::patches_to_matrix(
 
         // Fill at unstable positions using vectorized GPU indexing (single kernel)
         // idx[1] = out_h indices, idx[2] = out_w indices (stay on GPU)
-        printf("[PATCHES_TO_MATRIX] sparse vectorized: unstable_size=%lld, device=%s\n",
-               (long long)unstable_size, p.device().str().c_str());
         {
             using namespace torch::indexing;
             auto dev_opts = torch::TensorOptions().dtype(torch::kLong).device(p.device());

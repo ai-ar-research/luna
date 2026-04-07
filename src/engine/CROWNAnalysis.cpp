@@ -896,8 +896,6 @@ void CROWNAnalysis::concretizeNode(unsigned startIndex, const Vector<unsigned>& 
         // Efficient patches-mode concretization using inplace_unfold + einsum
         // (mirrors auto_LiRPA concretize_patches in perturbations.py:294-315).
         // Avoids materializing the full dense A matrix.
-        printf("[PATCHES_CONCRETIZE] node %u: using patches matmul path (lPatches=%d, uPatches=%d)\n",
-               startIndex, lPatches, uPatches);
 
         // Helper: concretize one side using Patches::matmul
         // sign = -1 for lower bound, +1 for upper bound
@@ -968,7 +966,6 @@ void CROWNAnalysis::concretizeNode(unsigned startIndex, const Vector<unsigned>& 
         }
     } else {
         // Standard tensor path (no patches)
-        printf("[TENSOR_CONCRETIZE] node %u: using dense tensor path\n", startIndex);
         torch::Tensor lA = lA_bound.asTensor();
         torch::Tensor uA = uA_bound.asTensor();
 
