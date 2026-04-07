@@ -883,58 +883,115 @@ void CROWNAnalysis::concretizeNode(unsigned startIndex, const Vector<unsigned>& 
     
     BoundA lA_bound = _lA.exists(inputIndex) ? _lA[inputIndex] : BoundA();
     BoundA uA_bound = _uA.exists(inputIndex) ? _uA[inputIndex] : BoundA();
-    
-    torch::Tensor lA, uA;
 
-    if (lA_bound.isPatches()) {
-        auto p = lA_bound.asPatches();
-        if (!p->input_shape.empty()) {
-            lA = p->to_matrix(p->input_shape);
-            // to_matrix returns [batch, spec, C, H, W] — flatten to [batch, spec, neurons]
-            if (lA.dim() == 5) lA = lA.flatten(2);
-        } else {
-            throw std::runtime_error("CROWNAnalysis::concretizeNode - Patches without input_shape, cannot convert to matrix");
-        }
-    } else {
-        lA = lA_bound.asTensor();
-    }
-
-    if (uA_bound.isPatches()) {
-        auto p = uA_bound.asPatches();
-        if (!p->input_shape.empty()) {
-            uA = p->to_matrix(p->input_shape);
-            if (uA.dim() == 5) uA = uA.flatten(2);
-        } else {
-            throw std::runtime_error("CROWNAnalysis::concretizeNode - Patches without input_shape, cannot convert to matrix");
-        }
-    } else {
-        uA = uA_bound.asTensor();
-    }
-    
     torch::Tensor lBias = _lowerBias.exists(inputIndex) ? _lowerBias[inputIndex] : torch::Tensor();
     torch::Tensor uBias = _upperBias.exists(inputIndex) ? _upperBias[inputIndex] : torch::Tensor();
 
-    if (lA.defined() && lA.dim() >= 2) {
-        int nodeDim = inputLower.size(0);
-        int expectedNodeDim = lA.size(-1);
-        
-        if (nodeDim != expectedNodeDim) {
-            log(Stringf("concretizeNode(%u) - Dim mismatch: input=%d, expected=%d; fallback to IBP", startIndex, nodeDim, expectedNodeDim));
-            if (_ibpBounds.exists(startIndex)) {
-                _concreteBounds[startIndex] = _ibpBounds[startIndex];
-                _torchModel->setConcreteBounds(startIndex, _ibpBounds[startIndex]);
-                // Store bounds in node (auto_LiRPA style)
-                if (_nodes.exists(startIndex)) {
-                    _nodes[startIndex]->setBounds(_ibpBounds[startIndex].lower(),
-                                                  _ibpBounds[startIndex].upper());
-                }
-            }
-            return;
-        }
-    }
+    bool lPatches = lA_bound.isPatches();
+    bool uPatches = uA_bound.isPatches();
 
     torch::Tensor concreteLower, concreteUpper;
-    computeConcreteBounds(lA, uA, lBias, uBias, inputLower, inputUpper, concreteLower, concreteUpper);
+
+    if (lPatches || uPatches) {
+        // Efficient patches-mode concretization using inplace_unfold + einsum
+        // (mirrors auto_LiRPA concretize_patches in perturbations.py:294-315).
+        // Avoids materializing the full dense A matrix.
+        printf("[PATCHES_CONCRETIZE] node %u: using patches matmul path (lPatches=%d, uPatches=%d)\n",
+               startIndex, lPatches, uPatches);
+
+        // Helper: concretize one side using Patches::matmul
+        // sign = -1 for lower bound, +1 for upper bound
+        // Formula: bound = A.matmul(center) + sign * |A|.matmul(diff) + bias
+        auto concretize_patches_side = [&](const BoundA& A_bound, const torch::Tensor& bias, int sign) -> torch::Tensor {
+            if (!A_bound.defined()) return torch::Tensor();
+
+            auto patches_ptr = A_bound.asPatches();
+            if (!patches_ptr || patches_ptr->input_shape.empty()) {
+                throw std::runtime_error("CROWNAnalysis::concretizeNode - Patches without input_shape");
+            }
+
+            const auto& in_shape = patches_ptr->input_shape;
+            torch::Tensor xL_img = inputLower.reshape(in_shape).to(torch::kFloat32);
+            torch::Tensor xU_img = inputUpper.reshape(in_shape).to(torch::kFloat32);
+
+            torch::Tensor center = (xU_img + xL_img) / 2.0f;
+            torch::Tensor diff = (xU_img - xL_img) / 2.0f;
+
+            // A.matmul(center) and |A|.matmul(diff) — no dense matrix created
+            torch::Tensor bound = patches_ptr->matmul(center);
+            torch::Tensor bound_diff = patches_ptr->matmul(diff, /*patch_abs=*/true);
+
+            if (sign == 1) {
+                bound = bound + bound_diff;
+            } else {
+                bound = bound - bound_diff;
+            }
+
+            // Flatten spatial dims: (batch, out_c, out_h, out_w) -> (batch, spec)
+            // or sparse: (batch, unstable_size) already 2D
+            if (bound.dim() > 2) {
+                bound = bound.reshape({bound.size(0), -1});
+            }
+
+            // Add bias: bias is (spec, batch) -> transpose to (batch, spec)
+            if (bias.defined()) {
+                torch::Tensor b = bias.to(torch::kFloat32);
+                if (b.dim() == 2) {
+                    // (spec, batch) -> (batch, spec)
+                    b = b.transpose(0, 1);
+                } else if (b.dim() == 1) {
+                    // (spec,) -> (1, spec)
+                    b = b.unsqueeze(0);
+                }
+                bound = bound + b;
+            }
+
+            // Squeeze to (spec,) — batch is always 1 for verification
+            return bound.squeeze(0);
+        };
+
+        if (lPatches) {
+            concreteLower = concretize_patches_side(lA_bound, lBias, -1);
+        }
+        if (uPatches) {
+            concreteUpper = concretize_patches_side(uA_bound, uBias, +1);
+        }
+
+        // Handle mixed case: one patches, one tensor
+        if (!lPatches && lA_bound.defined()) {
+            torch::Tensor lA = lA_bound.asTensor();
+            concreteLower = computeConcreteLowerBound(lA, lBias, inputLower, inputUpper);
+        }
+        if (!uPatches && uA_bound.defined()) {
+            torch::Tensor uA = uA_bound.asTensor();
+            concreteUpper = computeConcreteUpperBound(uA, uBias, inputLower, inputUpper);
+        }
+    } else {
+        // Standard tensor path (no patches)
+        printf("[TENSOR_CONCRETIZE] node %u: using dense tensor path\n", startIndex);
+        torch::Tensor lA = lA_bound.asTensor();
+        torch::Tensor uA = uA_bound.asTensor();
+
+        if (lA.defined() && lA.dim() >= 2) {
+            int nodeDim = inputLower.size(0);
+            int expectedNodeDim = lA.size(-1);
+
+            if (nodeDim != expectedNodeDim) {
+                log(Stringf("concretizeNode(%u) - Dim mismatch: input=%d, expected=%d; fallback to IBP", startIndex, nodeDim, expectedNodeDim));
+                if (_ibpBounds.exists(startIndex)) {
+                    _concreteBounds[startIndex] = _ibpBounds[startIndex];
+                    _torchModel->setConcreteBounds(startIndex, _ibpBounds[startIndex]);
+                    if (_nodes.exists(startIndex)) {
+                        _nodes[startIndex]->setBounds(_ibpBounds[startIndex].lower(),
+                                                      _ibpBounds[startIndex].upper());
+                    }
+                }
+                return;
+            }
+        }
+
+        computeConcreteBounds(lA, uA, lBias, uBias, inputLower, inputUpper, concreteLower, concreteUpper);
+    }
 
     log(Stringf("concretizeNode() - Computed concrete bounds: lower.defined()=%d, upper.defined()=%d",
         concreteLower.defined(), concreteUpper.defined()));
@@ -1090,7 +1147,8 @@ torch::Tensor CROWNAnalysis::preprocessC(const torch::Tensor& C, unsigned startI
         // Create identity matrix in format (spec, batch, output)
         // For identity: spec_dim = outputSize, batch = 1
         // Shape: [outputSize, 1, outputSize]
-        torch::Tensor identity = torch::eye(outputSize, torch::kFloat32); // [outputSize, outputSize]
+        auto opts = torch::TensorOptions().dtype(torch::kFloat32).device(_torchModel->getDevice());
+        torch::Tensor identity = torch::eye(outputSize, opts); // [outputSize, outputSize] on target device
         torch::Tensor result = identity.unsqueeze(1); // [outputSize, 1, outputSize]
         return result;
     }
@@ -1326,7 +1384,6 @@ torch::Tensor CROWNAnalysis::computeConcreteLowerBound(
     torch::Tensor xU = ensure3x(xUpper.to(torch::kFloat32));     // (n,) -> (1,n,1)
     torch::Tensor bL = ensure3b(lBias.to(torch::kFloat32));      // (spec,batch) -> (1,spec,1) after ensure3b
 
-
     if (AL.dim() != 3 || xL.dim() != 3 || xU.dim() != 3) {
         std::ostringstream oss;
         oss << "CROWNAnalysis::computeConcreteLowerBound - Shape error: "
@@ -1488,7 +1545,13 @@ BoundA CROWNAnalysis::addA(const BoundA& A1, const BoundA& A2) {
                 int64_t H = p->output_shape[2];
                 int64_t W = p->output_shape[3];
                 int64_t n = C * H * W;
-                auto opts = torch::TensorOptions().dtype(torch::kFloat32);
+                // Use target device from unstable indices or model device
+                torch::Device target_device = torch::kCPU;
+                if (p->unstable_idx.has_value() && !p->unstable_idx.value().empty() &&
+                    p->unstable_idx.value()[0].defined()) {
+                    target_device = p->unstable_idx.value()[0].device();
+                }
+                auto opts = torch::TensorOptions().dtype(torch::kFloat32).device(target_device);
                 if (p->unstable_idx.has_value()) {
                     // Sparse identity: select rows from identity
                     auto& idx = p->unstable_idx.value();

@@ -237,8 +237,12 @@ int lunaMain(int argc, char* argv[]) {
     }
 
     try {
-        if (LunaConfiguration::VERBOSE) {
-            std::cout << "Set threads to 1 for deterministic results" << std::endl;
+        if (LunaConfiguration::USE_CUDA) {
+            if (LunaConfiguration::VERBOSE) {
+                std::cout << "CUDA active: using " << at::get_num_threads() << " CPU threads" << std::endl;
+            }
+        } else if (LunaConfiguration::VERBOSE) {
+            std::cout << "CPU mode: using " << at::get_num_threads() << " threads" << std::endl;
         }
 
         if (LunaConfiguration::VERBOSE) {

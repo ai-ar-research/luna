@@ -137,6 +137,61 @@ torch::Tensor Patches::to_matrix(const std::vector<int64_t>& in_shape) const {
     return patches_to_matrix(patches, in_shape, stride, padding, output_shape, unstable_idx, inserted_zeros);
 }
 
+torch::Tensor Patches::matmul(const torch::Tensor& input, bool patch_abs,
+                               const std::vector<int64_t>& expand_shape) const {
+    // Efficient bound computation without materializing full dense matrix.
+    // Mirrors auto_LiRPA Patches.matmul (patches.py:285-320).
+    // Uses inplace_unfold (zero-copy strided view) + einsum.
+
+    printf("[PATCHES_MATMUL] patches shape: [%lld", (long long)patches.size(0));
+    for (int d = 1; d < patches.dim(); ++d) printf(",%lld", (long long)patches.size(d));
+    printf("], sparse=%d, patch_abs=%d\n", unstable_idx.has_value() ? 1 : 0, patch_abs ? 1 : 0);
+
+    torch::Tensor p = patches;
+    if (patch_abs) {
+        p = p.abs();
+    }
+
+    torch::Tensor inp = input;
+    if (!expand_shape.empty()) {
+        inp = inp.expand(torch::IntArrayRef(expand_shape));
+    }
+
+    // Extract kernel size from patches tensor
+    std::vector<int64_t> kernel_size = {p.size(-2), p.size(-1)};
+
+    // Unfold input: returns (batch, out_h, out_w, C, kh, kw)
+    torch::Tensor unfold_input = inplace_unfold(
+        inp, kernel_size, stride, padding, inserted_zeros, output_padding);
+
+    if (unstable_idx.has_value()) {
+        // Sparse case
+        // p shape: (unstable_size, batch, C, kh, kw)
+        // unfold_input shape: (batch, out_h, out_w, C, kh, kw)
+
+        int64_t out_c = output_shape[1];
+        // Expand to (out_c, batch, out_h, out_w, C, kh, kw)
+        torch::Tensor uf = unfold_input.unsqueeze(0).expand(
+            {out_c, -1, -1, -1, -1, -1, -1});
+
+        const auto& idx = unstable_idx.value();
+        // Select unstable positions: idx[0]=channel, idx[1]=h, idx[2]=w
+        // Result: (unstable_size, batch, C, kh, kw)
+        using namespace torch::indexing;
+        uf = uf.index({idx[0], Slice(), idx[1], idx[2]});
+
+        // einsum: sbchw,sbchw->bs
+        return torch::einsum("sbchw,sbchw->bs", {uf, p});
+    } else {
+        // Non-sparse case
+        // p shape: (out_c, batch, out_h, out_w, C, kh, kw) [7D]
+        // unfold_input shape: (batch, out_h, out_w, C, kh, kw) [6D]
+
+        // einsum: bijchw,sbijchw->bsij
+        return torch::einsum("bijchw,sbijchw->bsij", {unfold_input, p});
+    }
+}
+
 torch::Tensor insert_zeros(const torch::Tensor& image, int64_t s) {
     if (s <= 0) return image;
     
@@ -380,20 +435,27 @@ torch::Tensor Patches::patches_to_matrix(
              padded_h * str[0], str[1], orig_stride[4], padded_w, 1}
         );
 
-        // Fill using diagonal indexing
+        // Fill using vectorized diagonal indexing (single GPU kernel instead of O(output_x*output_y) kernels)
         // pieces has shape (out_c, batch, out_h, out_w, c, h, w)
         // Need to transpose to (batch, out_c, out_h, out_w, c, h, w)
         torch::Tensor pieces_transposed = p.permute({1, 0, 2, 3, 4, 5, 6});
 
-        // Create indices for diagonal selection
-        for (int64_t i = 0; i < output_x; ++i) {
-            for (int64_t j = 0; j < output_y; ++j) {
-                using namespace torch::indexing;
-                matrix_strided.index_put_(
-                    {Slice(), Slice(), i, j, i, j, Slice(), Slice(), Slice()},
-                    pieces_transposed.index({Slice(), Slice(), i, j, Slice(), Slice(), Slice()})
-                );
-            }
+        printf("[PATCHES_TO_MATRIX] non-sparse vectorized: out=%lldx%lld, device=%s\n",
+               (long long)output_x, (long long)output_y, p.device().str().c_str());
+        {
+            using namespace torch::indexing;
+            auto dev_opts = torch::TensorOptions().dtype(torch::kLong).device(p.device());
+            torch::Tensor first_indices = torch::arange(output_x * output_y, dev_opts);
+            torch::Tensor second_indices = torch::div(first_indices, output_y, "trunc");
+            torch::Tensor third_indices = torch::fmod(first_indices, output_y);
+
+            // Merge spatial dims: (batch, out_c, out_h*out_w, c, h, w)
+            torch::Tensor pieces_reshaped = pieces_transposed.reshape(
+                {batch_size, output_channel, output_x * output_y, input_channel, kernel_x, kernel_y});
+
+            matrix_strided.index_put_(
+                {Slice(), Slice(), second_indices, third_indices, second_indices, third_indices, Slice(), Slice(), Slice()},
+                pieces_reshaped);
         }
 
         // Reshape to final form
@@ -430,19 +492,18 @@ torch::Tensor Patches::patches_to_matrix(
         // Transpose to (batch, unstable_size, c, h, w)
         torch::Tensor pieces_transposed = p.permute({1, 0, 2, 3, 4});
 
-        // Fill at unstable positions
-        // idx[1] = out_h indices, idx[2] = out_w indices
-        // Batch-extract indices to CPU once to avoid per-element GPU synchronization
-        auto h_idx_cpu = idx[1].to(torch::kCPU);
-        auto w_idx_cpu = idx[2].to(torch::kCPU);
-        auto h_acc = h_idx_cpu.accessor<int64_t, 1>();
-        auto w_acc = w_idx_cpu.accessor<int64_t, 1>();
-        for (int64_t i = 0; i < unstable_size; ++i) {
+        // Fill at unstable positions using vectorized GPU indexing (single kernel)
+        // idx[1] = out_h indices, idx[2] = out_w indices (stay on GPU)
+        printf("[PATCHES_TO_MATRIX] sparse vectorized: unstable_size=%lld, device=%s\n",
+               (long long)unstable_size, p.device().str().c_str());
+        {
             using namespace torch::indexing;
+            auto dev_opts = torch::TensorOptions().dtype(torch::kLong).device(p.device());
+            torch::Tensor first_indices = torch::arange(unstable_size, dev_opts);
+
             matrix_strided.index_put_(
-                {Slice(), i, h_acc[i], w_acc[i], Slice(), Slice(), Slice()},
-                pieces_transposed.index({Slice(), i, Slice(), Slice(), Slice()})
-            );
+                {Slice(), first_indices, idx[1], idx[2], Slice(), Slice(), Slice()},
+                pieces_transposed);
         }
 
         // Reshape to final form

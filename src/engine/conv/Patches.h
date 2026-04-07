@@ -74,6 +74,15 @@ public:
     );
     
     torch::Tensor to_matrix(const std::vector<int64_t>& in_shape) const;
+
+    // Efficient bound computation without materializing full dense matrix.
+    // Uses inplace_unfold + einsum (mirrors auto_LiRPA Patches.matmul).
+    // input: (batch, C, H, W)
+    // patch_abs: if true, use abs(patches) for computing bound differences
+    // expand_shape: if non-empty, expand input to this shape before unfolding
+    // Returns: (batch, unstable_size) for sparse, (batch, out_c, out_h, out_w) for dense
+    torch::Tensor matmul(const torch::Tensor& input, bool patch_abs = false,
+                         const std::vector<int64_t>& expand_shape = {}) const;
 };
 
 // Helper functions declarations

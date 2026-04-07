@@ -11,7 +11,7 @@ namespace NLR {
 BoundedConvNode::BoundedConvNode(const torch::nn::Conv1d& convModule,
                                  ConvMode mode,
                                  const String& name)
-    : conv1d(convModule), mode(mode), conv_dim(1) {
+    : conv1d(convModule), conv_dim(1), mode(mode) {
 
     _nodeName = name;
     _nodeIndex = 0;
@@ -27,7 +27,7 @@ BoundedConvNode::BoundedConvNode(const torch::nn::Conv1d& convModule,
 BoundedConvNode::BoundedConvNode(const torch::nn::Conv2d& convModule,
                                  ConvMode mode,
                                  const String& name)
-    : conv2d(convModule), mode(mode), conv_dim(2) {
+    : conv2d(convModule), conv_dim(2), mode(mode) {
 
     _nodeName = name;
     _nodeIndex = 0;
