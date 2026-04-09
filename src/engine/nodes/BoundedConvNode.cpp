@@ -860,7 +860,7 @@ BoundA BoundedConvNode::boundOneSide(const BoundA& last_A,
             new_padding_vec,
             new_output_padding_vec,
             0,
-            std::nullopt, // identity = 0 (default, since we materialized)
+            0,            // identity = 0 (materialized, no longer identity)
             in_shape_64   // input_shape for this conv layer
         ));
     }

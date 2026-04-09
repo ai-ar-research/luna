@@ -728,7 +728,7 @@ void CROWNAnalysis::backwardFrom(unsigned startIndex, const Vector<unsigned>& un
                             // Use A matrix context to infer correct dimension order
                             torch::Tensor norm_propagated = normalize_bias(propagated_lbias, A_for_context);
                             torch::Tensor norm_cur = normalize_bias(cur, A_for_context);
-                            
+
                             propagated_lbias = norm_propagated + norm_cur;
                         } else {
                             propagated_lbias = cur.defined() ? normalize_bias(cur, A_for_context) : propagated_lbias;
@@ -893,77 +893,42 @@ void CROWNAnalysis::concretizeNode(unsigned startIndex, const Vector<unsigned>& 
     torch::Tensor concreteLower, concreteUpper;
 
     if (lPatches || uPatches) {
-        // Efficient patches-mode concretization using inplace_unfold + einsum
-        // (mirrors auto_LiRPA concretize_patches in perturbations.py:294-315).
-        // Avoids materializing the full dense A matrix.
+        // Convert patches to dense matrix and use standard dense concretization.
+        // to_matrix returns [batch, spec, C, H, W] — flatten last 3 dims to [batch, spec, features].
+        torch::Tensor lA, uA;
 
-        // Helper: concretize one side using Patches::matmul
-        // sign = -1 for lower bound, +1 for upper bound
-        // Formula: bound = A.matmul(center) + sign * |A|.matmul(diff) + bias
-        auto concretize_patches_side = [&](const BoundA& A_bound, const torch::Tensor& bias, int sign) -> torch::Tensor {
-            if (!A_bound.defined()) return torch::Tensor();
-
-            auto patches_ptr = A_bound.asPatches();
-            if (!patches_ptr || patches_ptr->input_shape.empty()) {
-                throw std::runtime_error("CROWNAnalysis::concretizeNode - Patches without input_shape");
+        auto flatten_matrix = [](torch::Tensor& A) {
+            if (A.defined() && A.dim() > 3) {
+                // [batch, spec, C, H, W] -> [batch, spec, C*H*W]
+                A = A.flatten(2);
             }
-
-            const auto& in_shape = patches_ptr->input_shape;
-            torch::Tensor xL_img = inputLower.reshape(in_shape).to(torch::kFloat32);
-            torch::Tensor xU_img = inputUpper.reshape(in_shape).to(torch::kFloat32);
-
-            torch::Tensor center = (xU_img + xL_img) / 2.0f;
-            torch::Tensor diff = (xU_img - xL_img) / 2.0f;
-
-            // A.matmul(center) and |A|.matmul(diff) — no dense matrix created
-            torch::Tensor bound = patches_ptr->matmul(center);
-            torch::Tensor bound_diff = patches_ptr->matmul(diff, /*patch_abs=*/true);
-
-            if (sign == 1) {
-                bound = bound + bound_diff;
-            } else {
-                bound = bound - bound_diff;
-            }
-
-            // Flatten spatial dims: (batch, out_c, out_h, out_w) -> (batch, spec)
-            // or sparse: (batch, unstable_size) already 2D
-            if (bound.dim() > 2) {
-                bound = bound.reshape({bound.size(0), -1});
-            }
-
-            // Add bias: bias is (spec, batch) -> transpose to (batch, spec)
-            if (bias.defined()) {
-                torch::Tensor b = bias.to(torch::kFloat32);
-                if (b.dim() == 2) {
-                    // (spec, batch) -> (batch, spec)
-                    b = b.transpose(0, 1);
-                } else if (b.dim() == 1) {
-                    // (spec,) -> (1, spec)
-                    b = b.unsqueeze(0);
-                }
-                bound = bound + b;
-            }
-
-            // Squeeze to (spec,) — batch is always 1 for verification
-            return bound.squeeze(0);
         };
 
         if (lPatches) {
-            concreteLower = concretize_patches_side(lA_bound, lBias, -1);
-        }
-        if (uPatches) {
-            concreteUpper = concretize_patches_side(uA_bound, uBias, +1);
+            auto p = lA_bound.asPatches();
+            if (p && !p->input_shape.empty()) {
+                lA = p->to_matrix(p->input_shape);
+                flatten_matrix(lA);
+            }
+        } else if (lA_bound.defined()) {
+            lA = lA_bound.asTensor();
         }
 
-        // Handle mixed case: one patches, one tensor
-        if (!lPatches && lA_bound.defined()) {
-            torch::Tensor lA = lA_bound.asTensor();
-            concreteLower = computeConcreteLowerBound(lA, lBias, inputLower, inputUpper);
+        if (uPatches) {
+            auto p = uA_bound.asPatches();
+            if (p && !p->input_shape.empty()) {
+                uA = p->to_matrix(p->input_shape);
+                flatten_matrix(uA);
+            }
+        } else if (uA_bound.defined()) {
+            uA = uA_bound.asTensor();
         }
-        if (!uPatches && uA_bound.defined()) {
-            torch::Tensor uA = uA_bound.asTensor();
-            concreteUpper = computeConcreteUpperBound(uA, uBias, inputLower, inputUpper);
-        }
+
+        // Flatten input bounds to match the flattened A matrix feature dim
+        torch::Tensor flatInputLower = inputLower.flatten();
+        torch::Tensor flatInputUpper = inputUpper.flatten();
+
+        computeConcreteBounds(lA, uA, lBias, uBias, flatInputLower, flatInputUpper, concreteLower, concreteUpper);
     } else {
         // Standard tensor path (no patches)
         torch::Tensor lA = lA_bound.asTensor();

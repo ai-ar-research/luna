@@ -67,21 +67,35 @@ void BoundedReLUNode::boundBackward(
     // Extract live spec dimension from last_lA or last_uA for per-spec alpha
     int specDim = 1;
     auto inferSpecDim = [](const BoundA& A) -> int {
-        if (!A.defined() || !A.isTensor()) return 1;
-        torch::Tensor t = A.asTensor();
-        if (!t.defined()) return 1;
-        // A matrix conventions in this codebase:
-        // - 3D A: [S, B, ...] => spec dim is size(0), batch dim is size(1)
-        // - 2D A: [S, ...]    => spec dim is size(0)
-        // For alpha-CROWN, the spec dimension from the output backward pass is what matters
-        // When A shape is [S, 1, neurons], S is the number of specs we optimize for
-        if (t.dim() >= 3) return (int)t.size(0);
-        if (t.dim() == 2) return (int)t.size(0);
+        if (!A.defined()) return 1;
+        if (A.isTensor()) {
+            torch::Tensor t = A.asTensor();
+            if (!t.defined()) return 1;
+            // A matrix conventions in this codebase:
+            // - 3D A: [S, B, ...] => spec dim is size(0), batch dim is size(1)
+            // - 2D A: [S, ...]    => spec dim is size(0)
+            if (t.dim() >= 3) return (int)t.size(0);
+            if (t.dim() == 2) return (int)t.size(0);
+            return 1;
+        }
+        if (A.isPatches()) {
+            auto p = A.asPatches();
+            if (!p) return 1;
+            // Sparse patches: [unstable_size, batch, C, kh, kw] → spec = unstable_size
+            if (p->unstable_idx.has_value()) {
+                return (int)p->patches.size(0);
+            }
+            // Dense patches: [out_c, batch, out_h, out_w, C, kh, kw] → spec = out_c * out_h * out_w
+            if (p->patches.dim() == 7) {
+                return (int)(p->patches.size(0) * p->patches.size(2) * p->patches.size(3));
+            }
+            return (int)p->patches.size(0);
+        }
         return 1;
     };
-    if (effective_lA.defined() && effective_lA.isTensor()) {
+    if (effective_lA.defined()) {
         specDim = inferSpecDim(effective_lA);
-    } else if (effective_uA.defined() && effective_uA.isTensor()) {
+    } else if (effective_uA.defined()) {
         specDim = inferSpecDim(effective_uA);
     }
     _currentSpecDim = specDim;  // Store for use in _maskAlpha
