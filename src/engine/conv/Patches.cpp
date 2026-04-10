@@ -428,7 +428,7 @@ torch::Tensor Patches::patches_to_matrix(
             {batch_size, output_channel, output_x, output_y, output_x, output_y,
              input_channel, kernel_x, kernel_y},
             {orig_stride[0], orig_stride[1], orig_stride[2], orig_stride[3],
-             padded_h * str[0], str[1], orig_stride[4], padded_w, 1}
+             padded_w * str[0], str[1], orig_stride[4], padded_w, 1}
         );
 
         // Fill using vectorized diagonal indexing (single GPU kernel instead of O(output_x*output_y) kernels)
@@ -476,10 +476,12 @@ torch::Tensor Patches::patches_to_matrix(
         auto orig_stride = A_matrix.strides();
 
         // Create strided view
+        // The last dim of A_matrix is flattened (padded_h * padded_w), so advancing
+        // one row in the 2D input = padded_w elements, NOT padded_h.
         torch::Tensor matrix_strided = torch::as_strided(
             A_matrix,
             {batch_size, unstable_size, output_x, output_y, input_channel, kernel_x, kernel_y},
-            {orig_stride[0], orig_stride[1], padded_h * str[0], str[1], orig_stride[2], padded_w, 1}
+            {orig_stride[0], orig_stride[1], padded_w * str[0], str[1], orig_stride[2], padded_w, 1}
         );
 
         // pieces has shape (unstable_size, batch, c, h, w)
