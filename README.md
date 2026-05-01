@@ -23,6 +23,8 @@ connected, convolutional, transposed convolutional, batch normalization, ReLU,
 sigmoid, reshape, flatten, slice, concatenation, and residual (add/sub)
 connections.
 
+The system description of Luna can be found [here](https://arxiv.org/abs/2603.23878).
+
 ## Technical Background
 
 Neural network verification asks the question: given a neural network and a
