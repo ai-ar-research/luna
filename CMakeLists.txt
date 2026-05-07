@@ -125,6 +125,8 @@ if(NOT EXISTS "${ONNX_DIR}/onnx.proto3.pb.h")
 endif()
 
 file(GLOB DEPS_ONNX "${ONNX_DIR}/*.cc")
+# Bundled protobuf must come before system includes (e.g. Homebrew) to avoid header version mismatch
+include_directories(BEFORE SYSTEM ${PROTOBUF_DIR}/installed/include)
 include_directories(SYSTEM ${ONNX_DIR})
 
 #############

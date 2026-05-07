@@ -338,5 +338,5 @@ PYBIND11_MODULE(LirpaPyCore, m) {
         });
     
     // Version info
-    m.attr("__version__") = LIRPA_VERSION;
+    m.attr("__version__") = LUNA_VERSION;
 }
