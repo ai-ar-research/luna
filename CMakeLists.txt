@@ -241,6 +241,8 @@ list(APPEND LIBS Threads::Threads)
 # Subdirectories will add their sources via target_sources()
 add_library(${LUNA_LIB} ${DEPS_ONNX})
 
+set_target_properties(${LUNA_LIB} PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
 # Set base include directories
 target_include_directories(${LUNA_LIB} PUBLIC
     ${SRC_DIR}
