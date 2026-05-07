@@ -67,6 +67,11 @@ const char *Error::getUserMessage() const
     return _userMessage;
 }
 
+const char *Error::what() const noexcept
+{
+    return _userMessage[0] ? _userMessage : _errorClass;
+}
+
 //
 // Local Variables:
 // compile-command: "make -C ../.. "

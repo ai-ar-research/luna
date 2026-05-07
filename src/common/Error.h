@@ -16,7 +16,9 @@
 #ifndef __Error_h__
 #define __Error_h__
 
-class Error
+#include <exception>
+
+class Error : public std::exception
 {
 public:
     Error( const char *errorClass, int code );
@@ -26,6 +28,7 @@ public:
     void setUserMessage( const char *userMessage );
     const char *getErrorClass() const;
     const char *getUserMessage() const;
+    const char *what() const noexcept override;
 
 private:
     enum {
