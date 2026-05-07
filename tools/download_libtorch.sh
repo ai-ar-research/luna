@@ -42,57 +42,42 @@ echo "Successfully installed PyTorch $version for $os $arch"
 
 if [[ "$os" == "Darwin" ]]; then
     echo "Checking OpenMP dependency for macOS..."
-    
-    # Check if OpenMP is already available
-    openmp_found=false
+
+    openmp_lib=""
     openmp_paths=(
-        "/opt/homebrew/lib/libomp.dylib"     
-        "/usr/local/lib/libomp.dylib"       
-        "$CONDA_PREFIX/lib/libomp.dylib"  
+        "$(brew --prefix libomp 2>/dev/null)/lib/libomp.dylib"
+        "/opt/homebrew/lib/libomp.dylib"
+        "/usr/local/lib/libomp.dylib"
+        "$CONDA_PREFIX/lib/libomp.dylib"
+        "/opt/anaconda3/lib/libomp.dylib"
     )
-    
+
     for path in "${openmp_paths[@]}"; do
         if [[ -f "$path" ]]; then
             echo "OpenMP found at: $path"
-            openmp_found=true
+            openmp_lib="$path"
             break
         fi
     done
-    
-    # Attempt at making robust for systems (Not sure if this works, my device had installed via Conda)
-    if [[ "$openmp_found" == false ]]; then
-        echo "OpenMP not found. PyTorch requires OpenMP to run properly."
-        
-        if command -v brew &> /dev/null; then
-            echo "Installing OpenMP via Homebrew..."
-            if brew install libomp; then
-                echo "OpenMP installed successfully via Homebrew"
-            else
-                echo "Failed to install OpenMP via Homebrew"
-                echo "Install manually: brew install libomp"
-            fi
-        elif command -v conda &> /dev/null; then
-            echo "Homebrew not found. Attempting to install via conda..."
-            if conda install -c conda-forge llvm-openmp -y; then
-                echo "OpenMP installed successfully via conda"
-            else
-                echo "Failed to install OpenMP via conda"
-                echo "Install manually: conda install -c conda-forge llvm-openmp"
-            fi
+
+    if [[ -z "$openmp_lib" ]]; then
+        echo "OpenMP not found. Attempting to install via Homebrew..."
+        if command -v brew &> /dev/null && brew install libomp; then
+            openmp_lib="$(brew --prefix libomp)/lib/libomp.dylib"
+        elif command -v conda &> /dev/null && conda install -c conda-forge llvm-openmp -y; then
+            openmp_lib="$CONDA_PREFIX/lib/libomp.dylib"
         else
-            echo "Neither Homebrew nor conda found."
-            echo "Install OpenMP manually:"
-            echo "Option 1: Install Homebrew, then run: brew install libomp"
-            echo "Option 2: Install conda, then run: conda install -c conda-forge llvm-openmp"
+            echo "Could not install OpenMP. Install manually: brew install libomp"
         fi
     fi
-fi
 
-# Command I used to resolve issue once path to libomp was found
-if [[ "$os" == "Darwin" && -f "/opt/anaconda3/lib/libomp.dylib" ]]; then
-    echo "Copying OpenMP library to PyTorch directory..."
-    cp /opt/anaconda3/lib/libomp.dylib libtorch-$version/lib/
-    echo "OpenMP library copied successfully"
+    if [[ -f "$openmp_lib" ]]; then
+        echo "Copying OpenMP library from $openmp_lib to PyTorch directory..."
+        cp "$openmp_lib" libtorch-$version/lib/libomp.dylib
+        echo "OpenMP library copied successfully"
+    else
+        echo "WARNING: OpenMP library not found; tests may crash at runtime."
+    fi
 fi
 
 cd $curdir

@@ -43,6 +43,14 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
+    - name: Install OpenMP (macOS)
+      if: runner.os == 'macOS'
+      run: brew install libomp
+
+    - name: Install OpenMP (Linux)
+      if: runner.os == 'Linux'
+      run: sudo apt-get update -q && sudo apt-get install -y libomp-dev
+
     - name: Set reusable strings
       # Turn repeated input strings (such as the build output directory) into step outputs. These step outputs can be used throughout the workflow file.
       id: strings
