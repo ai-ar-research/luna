@@ -112,6 +112,77 @@ cmake ../
 make -j$(nproc)
 ```
 
+### Building with GPU Support (HPC Cluster)
+
+To build Luna with CUDA support on an HPC cluster, you need to build on a GPU
+node with the appropriate modules loaded.
+
+**1. Activate your Python environment with CUDA-enabled PyTorch:**
+
+```bash
+conda activate ab_env
+# OR if using venv:
+# source ~/ab_env/bin/activate
+```
+
+Verify PyTorch has CUDA support (should show `+cu118` or similar):
+
+```bash
+python3 -c "import torch; print('PyTorch version:', torch.__version__); print('CUDA available:', torch.cuda.is_available())"
+```
+
+**2. Create a build directory:**
+
+```bash
+cd ~/luna
+mkdir -p build
+cd build
+```
+
+**3. Request an interactive GPU node session:**
+
+```bash
+srun -p gpu-a100-q --gres=gpu:1 --time=01:00:00 --pty bash
+```
+
+**4. Load the required modules on the GPU node:**
+
+```bash
+module load cmake-gcc11/3.21.3
+module load cuda11.8/toolkit/11.8.0
+```
+
+Verify the modules loaded correctly:
+
+```bash
+which cmake
+which nvcc
+nvcc --version
+```
+
+**5. Configure and build:**
+
+```bash
+cd ~/luna/build
+
+cmake .. -DCMAKE_BUILD_TYPE=Release \
+  -DTorch_DIR=$VIRTUAL_ENV/lib/python3.9/site-packages/torch/share/cmake/Torch \
+  -DBUILD_PYTHON_BINDINGS=OFF
+
+make -j2
+```
+
+**6. Verify the build and exit the GPU node:**
+
+```bash
+ls -la bin/luna
+./bin/luna --help
+exit
+```
+
+> **Note:** The exact module names, partition name (`gpu-a100-q`), and Python
+> path may differ depending on your cluster configuration. Adjust accordingly.
+
 ## Quick Start
 
 ### Command Line
