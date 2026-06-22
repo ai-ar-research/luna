@@ -1,3 +1,14 @@
+/*********************                                                        */
+/*! \file LunaMain.cpp
+ ** \verbatim
+ ** This file is part of the Luna project.
+ ** Copyright (c) 2025-2026 by the authors listed in the file AUTHORS
+ ** in the top-level source directory) and their institutional affiliations.
+ ** All rights reserved. See the file COPYING in the top-level source
+ ** directory for licensing information.\endverbatim
+ **
+ **/
+
 #include "LunaMain.h"
 #include "input_parsers/OnnxToTorch.h"
 #include "TorchModel.h"
@@ -10,7 +21,6 @@
 #include <string>
 #include <vector>
 
-// Helper function to print bounds
 static void printBounds(const torch::Tensor& lower, const torch::Tensor& upper) {
     torch::Tensor lb = lower;
     torch::Tensor ub = upper;
@@ -19,21 +29,7 @@ static void printBounds(const torch::Tensor& lower, const torch::Tensor& upper) 
 
     std::cout << std::fixed << std::setprecision(6);
 
-    /*
-    // Paired format: [lower, upper] per output
-    std::cout << "Output Bounds:" << std::endl;
-    for (int i = 0; i < lb.size(0); ++i) {
-        if (i > 0) std::cout << " ";
-        auto l = lb[i];
-        auto u = ub[i];
-        if (l.dim() > 0) l = l.flatten()[0];
-        if (u.dim() > 0) u = u.flatten()[0];
-        std::cout << "[" << l.item<double>() << ", " << u.item<double>() << "]";
-    }
-    std::cout << std::endl;
-    */
     std::cout << " " << std::endl;
-    // Separate lower/upper lists
     std::cout << "Lower Bounds: [";
     for (int i = 0; i < lb.size(0); ++i) {
         auto l = lb[i];
@@ -56,9 +52,9 @@ static void printBounds(const torch::Tensor& lower, const torch::Tensor& upper) 
 }
 
 enum class PropertyStatus {
-    Unsat,   // safe/verified - NO input violates the property
-    Sat,     // unsafe - counterexample exists
-    Unknown  // inconclusive
+    Unsat,
+    Sat,
+    Unknown
 };
 
 static PropertyStatus evaluatePropertyStatus(
@@ -92,9 +88,6 @@ static PropertyStatus evaluatePropertyStatus(
             NLR::OutputConstraintSet::evaluateORBranches(lb, ub, thresholds,
                                                          cMatrix.branchMapping,
                                                          cMatrix.branchSizes);
-        // OR of counterexample branches: unsafe if ANY branch is satisfied.
-        // Unsat (safe): ALL branches must be disproved (each branch's AND broken).
-        // Sat (unsafe): ANY branch is always satisfiable.
         bool allBranchesDisproved = true;
         bool anyBranchAlwaysSat = false;
 
@@ -119,9 +112,7 @@ static PropertyStatus evaluatePropertyStatus(
         return PropertyStatus::Unknown;
     }
 
-    // C @ y <= rhs is the counterexample condition (AND-conjunction).
-    // If ANY constraint has lb(C_i @ y) > rhs_i, that constraint can never
-    // be satisfied, breaking the AND → no counterexample → safe (unsat).
+    // lb > threshold breaks the counterexample AND-conjunction
     torch::Tensor lowerDiff = lb - thresholds;
     bool anyDisproved = (lowerDiff > 0).any().item<bool>();
 
@@ -130,8 +121,7 @@ static PropertyStatus evaluatePropertyStatus(
         return PropertyStatus::Unsat;
     }
 
-    // If ALL constraints have ub(C_i @ y) <= rhs_i, every constraint is always
-    // satisfiable → counterexample always exists → definitely unsafe (sat).
+    // ub <= threshold for all constraints means counterexample always satisfiable
     torch::Tensor upperDiff = ub - thresholds;
     bool allSatisfiable = (upperDiff <= 0).all().item<bool>();
 
@@ -173,7 +163,6 @@ void printUsage(const char* programName) {
 }
 
 int lunaMain(int argc, char* argv[]) {
-    // Check for help flag
     if (argc > 1) {
         std::string firstArg = argv[1];
         if (firstArg == "--help" || firstArg == "-h") {
@@ -182,12 +171,10 @@ int lunaMain(int argc, char* argv[]) {
         }
     }
 
-    // Parse arguments - support both positional and flag-based
     std::string onnxFilePath;
     std::string vnnlibFilePath;
     bool useFlags = false;
 
-    // Check if using flag-based arguments (--input, --property, --vnnlib)
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
         if (arg == "--input" || arg == "--property" || arg == "--vnnlib") {
@@ -197,10 +184,8 @@ int lunaMain(int argc, char* argv[]) {
     }
 
     if (useFlags) {
-        // Parse flag-based arguments first
         LunaConfiguration::parseArgs(argc, argv);
-        
-        // Get file paths from configuration
+
         if (LunaConfiguration::INPUT_FILE_PATH.length() == 0) {
             std::cerr << "ERROR: --input flag is required" << std::endl;
             printUsage(argv[0]);
@@ -211,11 +196,10 @@ int lunaMain(int argc, char* argv[]) {
             printUsage(argv[0]);
             return 1;
         }
-        
+
         onnxFilePath = LunaConfiguration::INPUT_FILE_PATH.ascii();
         vnnlibFilePath = LunaConfiguration::PROPERTY_FILE_PATH.ascii();
     } else {
-        // Parse positional arguments
         if (argc < 3) {
             printUsage(argv[0]);
             return 1;
@@ -224,15 +208,12 @@ int lunaMain(int argc, char* argv[]) {
         onnxFilePath = argv[1];
         vnnlibFilePath = argv[2];
 
-        // Prepare arguments for LunaConfiguration::parseArgs
-        // We need to skip the first two positional arguments
         std::vector<char*> configArgs;
-        configArgs.push_back(argv[0]);  // program name
+        configArgs.push_back(argv[0]);
         for (int i = 3; i < argc; ++i) {
             configArgs.push_back(argv[i]);
         }
 
-        // Parse configuration arguments
         LunaConfiguration::parseArgs(static_cast<int>(configArgs.size()), configArgs.data());
     }
 
@@ -257,7 +238,6 @@ int lunaMain(int argc, char* argv[]) {
         std::cout << "Model:    " << onnxFilePath << std::endl;
         std::cout << "Property: " << vnnlibFilePath << std::endl;
 
-        // Step 1: Create TorchModel from ONNX and VNN-LIB files
         std::shared_ptr<NLR::TorchModel> torchModel = std::make_shared<NLR::TorchModel>(
             String(onnxFilePath.c_str()),
             String(vnnlibFilePath.c_str())
@@ -270,7 +250,6 @@ int lunaMain(int argc, char* argv[]) {
             std::cout << "Number of nodes: " << torchModel->getNumNodes() << std::endl;
         }
 
-        // Step 2: Verify input bounds were loaded from VNN-LIB file
         if (!torchModel->hasInputBounds()) {
             std::cerr << "ERROR: Input bounds not loaded from VNN-LIB file!" << std::endl;
             return 1;
@@ -287,11 +266,8 @@ int lunaMain(int argc, char* argv[]) {
                       << upperBounds.max().item<double>() << "]" << std::endl;
         }
 
-        // Step 3: Check if specification matrix was loaded from VNN-LIB file
-        // Note: Do NOT pass the spec matrix to compute_bounds() — it's already stored
-        // in the model via setSpecificationFromConstraints() (which preserves thresholds).
-        // Passing it again would call setSpecificationMatrix() which clears thresholds
-        // needed for early stopping (isSpecVerified).
+        // spec already stored via setSpecificationFromConstraints; don't pass to
+        // compute_bounds again (would clear thresholds needed for isSpecVerified)
         if (torchModel->hasSpecificationMatrix()) {
             if (LunaConfiguration::VERBOSE) {
                 torch::Tensor C = torchModel->getSpecificationMatrix();
@@ -304,10 +280,8 @@ int lunaMain(int argc, char* argv[]) {
             }
         }
 
-        // Step 4: Run analysis based on configured method
         BoundedTensor<torch::Tensor> result;
 
-        // Print config summary
         {
             std::string method = (LunaConfiguration::ANALYSIS_METHOD == LunaConfiguration::AnalysisMethod::AlphaCROWN)
                 ? "alpha-crown" : "crown";
@@ -325,7 +299,7 @@ int lunaMain(int argc, char* argv[]) {
         if (LunaConfiguration::ANALYSIS_METHOD == LunaConfiguration::AnalysisMethod::AlphaCROWN) {
             result = torchModel->compute_bounds(
                 inputBounds,
-                nullptr,  // Spec already set via setSpecificationFromConstraints
+                nullptr,
                 LunaConfiguration::AnalysisMethod::AlphaCROWN,
                 LunaConfiguration::COMPUTE_LOWER,
                 LunaConfiguration::COMPUTE_UPPER
@@ -333,14 +307,13 @@ int lunaMain(int argc, char* argv[]) {
         } else {
             result = torchModel->compute_bounds(
                 inputBounds,
-                nullptr,  // Spec already set via setSpecificationFromConstraints
+                nullptr,
                 LunaConfiguration::AnalysisMethod::CROWN,
                 LunaConfiguration::COMPUTE_LOWER,
                 LunaConfiguration::COMPUTE_UPPER
             );
         }
 
-        // Step 5: Output the bounds
         if (result.lower().defined() && result.upper().defined()) {
             printBounds(result.lower(), result.upper());
         } else {
@@ -348,7 +321,6 @@ int lunaMain(int argc, char* argv[]) {
             return 1;
         }
 
-        // Step 6: Verify property using the specification already stored in the model
         PropertyStatus status = PropertyStatus::Unknown;
         std::string statusDetail;
         if (torchModel->hasSpecificationMatrix()) {
@@ -399,4 +371,3 @@ int lunaMain(int argc, char* argv[]) {
         return 1;
     }
 }
-

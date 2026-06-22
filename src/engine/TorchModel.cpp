@@ -1,3 +1,14 @@
+/*********************                                                        */
+/*! \file TorchModel.cpp
+ ** \verbatim
+ ** This file is part of the Luna project.
+ ** Copyright (c) 2025-2026 by the authors listed in the file AUTHORS
+ ** in the top-level source directory) and their institutional affiliations.
+ ** All rights reserved. See the file COPYING in the top-level source
+ ** directory for licensing information.\endverbatim
+ **
+ **/
+
 #include "TorchModel.h"
 #include "CROWNAnalysis.h"
 #include "AlphaCROWNAnalysis.h"
@@ -10,10 +21,6 @@
 
 namespace NLR {
 
-
-// CONSTRUCTOR AND INITIALIZATION
-
-
 TorchModel::TorchModel(const Vector<std::shared_ptr<BoundedTorchNode>>& nodes,
                        const Vector<unsigned>& inputIndices,
                        unsigned outputIndex,
@@ -22,10 +29,9 @@ TorchModel::TorchModel(const Vector<std::shared_ptr<BoundedTorchNode>>& nodes,
       _outputIndex(outputIndex), _dependencies(dependencies), _input_size(0), _output_size(0),
       _hasSpecificationMatrix(false), _hasORBranches(false), _hasFinalAnalysisBounds(false),
       _device(LunaConfiguration::getDevice()) {
-    
+
     log(Stringf("[TorchModel] Constructor called with %u nodes", nodes.size()));
-    
-    // Set input size from the first input node
+
     if (!inputIndices.empty() && inputIndices[0] < nodes.size()) {
         auto inputNode = nodes[inputIndices[0]];
         if (inputNode) {
@@ -33,8 +39,7 @@ TorchModel::TorchModel(const Vector<std::shared_ptr<BoundedTorchNode>>& nodes,
             log(Stringf("[TorchModel] Set input size to %u from input node %u", _input_size, inputIndices[0]));
         }
     }
-    
-    // Set output size from the output node
+
     if (outputIndex < nodes.size()) {
         auto outputNode = nodes[outputIndex];
         if (outputNode) {
@@ -42,20 +47,15 @@ TorchModel::TorchModel(const Vector<std::shared_ptr<BoundedTorchNode>>& nodes,
             log(Stringf("[TorchModel] Set output size to %u from output node %u", _output_size, outputIndex));
         }
     }
-    
-    // Ensure all nodes are on the configured device
-    moveToDevice(_device);
 
-    // Build dependency graph
+    moveToDevice(_device);
     buildDependencyGraph();
 }
 
-// Constructor that loads from ONNX file (mirrors auto_LiRPA BoundedModule)
 TorchModel::TorchModel(const String& onnxPath)
     : _device(LunaConfiguration::getDevice()) {
     log(Stringf("[TorchModel] Constructor called with ONNX path: %s", onnxPath.ascii()));
 
-    // Use OnnxToTorchParser to parse the ONNX file
     std::shared_ptr<TorchModel> parsedModel = OnnxToTorchParser::parse(onnxPath);
 
     if (!parsedModel) {
@@ -63,7 +63,6 @@ TorchModel::TorchModel(const String& onnxPath)
                           Stringf("Failed to parse ONNX file: %s", onnxPath.ascii()).ascii());
     }
 
-    // Copy all members from parsed model to this instance
     _nodes = parsedModel->_nodes;
     _inputIndices = parsedModel->_inputIndices;
     _outputIndex = parsedModel->_outputIndex;
@@ -75,26 +74,18 @@ TorchModel::TorchModel(const String& onnxPath)
     _hasFinalAnalysisBounds = false;
     _device = LunaConfiguration::getDevice();
 
-    // Initialize analysis configuration with defaults
-    // Configuration is now accessed via LunaConfiguration static members
-
-    // Ensure all nodes are on the configured device
     moveToDevice(_device);
-
-    // Build dependency graph
     buildDependencyGraph();
 
     log(Stringf("[TorchModel] Successfully loaded ONNX model with %u nodes", _nodes.size()));
 }
 
-// Constructor that loads from ONNX file and VNN-LIB file for input bounds
 TorchModel::TorchModel(const String& onnxPath,
                        const String& vnnlibPath)
     : _device(LunaConfiguration::getDevice()) {
     log(Stringf("[TorchModel] Constructor called with ONNX path: %s and VNN-LIB path: %s",
                 onnxPath.ascii(), vnnlibPath.ascii()));
 
-    // First, parse the ONNX file to build the network structure
     std::shared_ptr<TorchModel> parsedModel = OnnxToTorchParser::parse(onnxPath);
 
     if (!parsedModel) {
@@ -102,7 +93,6 @@ TorchModel::TorchModel(const String& onnxPath,
                           Stringf("Failed to parse ONNX file: %s", onnxPath.ascii()).ascii());
     }
 
-    // Copy all members from parsed model to this instance
     _nodes = parsedModel->_nodes;
     _inputIndices = parsedModel->_inputIndices;
     _outputIndex = parsedModel->_outputIndex;
@@ -114,48 +104,36 @@ TorchModel::TorchModel(const String& onnxPath,
     _hasFinalAnalysisBounds = false;
     _device = LunaConfiguration::getDevice();
 
-    // Initialize analysis configuration with defaults
-    // Configuration is now accessed via LunaConfiguration static members
-
-    // Ensure all nodes are on the configured device
     moveToDevice(_device);
-
-    // Build dependency graph
     buildDependencyGraph();
 
     log(Stringf("[TorchModel] Successfully loaded ONNX model with %u nodes", _nodes.size()));
 
-    // Now parse the VNN-LIB file to extract input bounds and output constraints
     log(Stringf("[TorchModel] Parsing VNN-LIB file for input bounds: %s", vnnlibPath.ascii()));
 
     try {
-        // Parse input bounds
         BoundedTensor<torch::Tensor> inputBounds =
             VnnLibInputParser::parseInputBounds(vnnlibPath, _input_size);
 
-        // Set the input bounds on this model
         setInputBounds(inputBounds);
 
         log(Stringf("[TorchModel] Successfully set input bounds from VNN-LIB file"));
 
-        // Parse output constraints (if present)
         try {
             log(Stringf("[TorchModel] Parsing VNN-LIB file for output constraints"));
-            OutputConstraintSet outputConstraints = 
+            OutputConstraintSet outputConstraints =
                 VnnLibInputParser::parseOutputConstraints(vnnlibPath, _output_size);
 
             if (outputConstraints.hasConstraints()) {
-                log(Stringf("[TorchModel] Found %u output constraints", 
+                log(Stringf("[TorchModel] Found %u output constraints",
                             outputConstraints.getNumConstraints()));
 
-                // Convert output constraints to C matrix
                 CMatrixResult cMatrixResult = outputConstraints.toCMatrix();
                 torch::Tensor C = cMatrixResult.C;
 
-                // DEBUG: Print specification matrix details
                 if (LunaConfiguration::VERBOSE) {
                     printf("[DEBUG TorchModel] Specification matrix created:\n");
-                    printf("  Shape: [%lld, %lld, %lld]\n", 
+                    printf("  Shape: [%lld, %lld, %lld]\n",
                            (long long)C.size(0), (long long)C.size(1), (long long)C.size(2));
                     printf("  Number of constraints: %lld\n", (long long)C.size(0));
                     printf("  Output dimension: %lld\n", (long long)C.size(2));
@@ -190,22 +168,18 @@ TorchModel::TorchModel(const String& onnxPath,
                     }
                 }
 
-                // Store the specification matrix in the model
-                //setSpecificationMatrix(C);
                 setSpecificationFromConstraints(outputConstraints);
 
-                log(Stringf("[TorchModel] Successfully set specification matrix with %d constraints", 
+                log(Stringf("[TorchModel] Successfully set specification matrix with %d constraints",
                             (int)C.size(0)));
             } else {
                 log(Stringf("[TorchModel] No output constraints found in VNN-LIB file"));
             }
         } catch (const std::exception& e) {
-            // Output constraints are optional, so log but don't fail
-            log(Stringf("[TorchModel] Could not parse output constraints: %s (continuing without them)", 
+            log(Stringf("[TorchModel] Could not parse output constraints: %s (continuing without them)",
                         e.what()));
         }
     } catch (const LunaError& e) {
-        // Re-throw LunaError as-is
         throw;
     } catch (const std::exception& e) {
         throw LunaError(LunaError::ONNX_PARSING_ERROR,
@@ -214,29 +188,18 @@ TorchModel::TorchModel(const String& onnxPath,
     }
 }
 
-
-// LOGGING
-
-
 void TorchModel::log(const String& message) const {
     (void)message;
     if (LunaConfiguration::NETWORK_LEVEL_REASONER_LOGGING) {
-        //printf("TorchModel: %s\n", message.ascii());
     }
 }
 
-
-// GRAPH MANAGEMENT AND TRAVERSAL
-
-
 void TorchModel::buildDependencyGraph() {
-   // Clear existing graph structures
    _dependents.clear();
    _degreeOut.clear();
    _degreeIn.clear();
    _processed.clear();
-   
-   // Initialize structures for all nodes
+
    for (const auto& pair : _dependencies) {
        unsigned nodeIndex = pair.first;
        _dependents[nodeIndex] = Vector<unsigned>();
@@ -244,8 +207,7 @@ void TorchModel::buildDependencyGraph() {
        _degreeIn[nodeIndex] = 0;
        _processed[nodeIndex] = false;
    }
-   
-   // Also initialize nodes that might not be in dependencies
+
    for (unsigned i = 0; i < _nodes.size(); ++i) {
        if (!_dependents.exists(i)) {
            _dependents[i] = Vector<unsigned>();
@@ -254,33 +216,27 @@ void TorchModel::buildDependencyGraph() {
            _processed[i] = false;
        }
    }
-   
-   // Build dependents and compute degrees
+
    buildDependents();
    computeDegrees();
 }
 
 void TorchModel::buildDependents() {
-   // For each node, build its dependents (reverse dependencies)
    for (const auto& pair : _dependencies) {
        unsigned nodeIndex = pair.first;
-       
-       // For each dependency of this node
+
        for (unsigned inputIndex : _dependencies[nodeIndex]) {
-           // This node is a dependent of its input
            _dependents[inputIndex].append(nodeIndex);
        }
    }
 }
 
 void TorchModel::computeDegrees() {
-   // Compute outgoing degrees (number of dependents)
    for (const auto& pair : _dependents) {
        unsigned nodeIndex = pair.first;
        _degreeOut[nodeIndex] = _dependents[nodeIndex].size();
    }
-   
-   // Compute incoming degrees (number of dependencies)
+
    for (const auto& pair : _dependencies) {
        unsigned nodeIndex = pair.first;
        _degreeIn[nodeIndex] = _dependencies[nodeIndex].size();
@@ -296,25 +252,20 @@ void TorchModel::resetProcessingState() {
 Vector<unsigned> TorchModel::topologicalSort() const {
    Vector<unsigned> sortedOrder;
    Queue<unsigned> queue;
-   
-   // Copy degree map for tracking
+
    Map<unsigned, unsigned> degreeIn = _degreeIn;
-   
-   // Initialize queue with nodes that have no incoming edges
-   // Check all nodes, not just those in dependencies
+
    for (unsigned i = 0; i < _nodes.size(); ++i) {
        if (degreeIn.exists(i) && degreeIn[i] == 0) {
            queue.push(i);
        }
    }
-   
-   // Process nodes in topological order
+
    while (!queue.empty()) {
        unsigned current = queue.peak();
        queue.pop();
        sortedOrder.append(current);
-       
-       // Update degrees for dependents
+
        if (_dependents.exists(current)) {
            for (unsigned dependent : _dependents[current]) {
                if (degreeIn.exists(dependent)) {
@@ -326,7 +277,7 @@ Vector<unsigned> TorchModel::topologicalSort() const {
            }
        }
    }
-   
+
    return sortedOrder;
 }
 
@@ -391,12 +342,8 @@ void TorchModel::markProcessed(unsigned nodeIndex) {
    }
 }
 
-
-// NODE ACCESS AND INFORMATION
-
-
 std::shared_ptr<BoundedTorchNode> TorchModel::getNode(unsigned index) const {
-    if ( index < _nodes.size() ) 
+    if ( index < _nodes.size() )
     {
         return _nodes[index];
     }
@@ -405,7 +352,7 @@ std::shared_ptr<BoundedTorchNode> TorchModel::getNode(unsigned index) const {
 
 Vector<unsigned> TorchModel::getAllNodeIndices() const {
     Vector<unsigned> indices;
-    for ( unsigned i = 0; i < _nodes.size(); ++i ) 
+    for ( unsigned i = 0; i < _nodes.size(); ++i )
     {
         indices.append(i);
     }
@@ -414,9 +361,9 @@ Vector<unsigned> TorchModel::getAllNodeIndices() const {
 
 Vector<unsigned> TorchModel::getNodesByType(NodeType type) const {
     Vector<unsigned> indices;
-    for ( unsigned i = 0; i < _nodes.size(); ++i ) 
+    for ( unsigned i = 0; i < _nodes.size(); ++i )
     {
-        if ( _nodes[i]->getNodeType() == type ) 
+        if ( _nodes[i]->getNodeType() == type )
         {
             indices.append(i);
         }
@@ -450,19 +397,14 @@ void TorchModel::moveToDevice(const torch::Device& device)
     }
 }
 
-
-// FORWARD PASS AND COMPUTATION
-
-
-torch::Tensor TorchModel::forward(unsigned nodeIndex, Map<unsigned, torch::Tensor>& activations, 
+torch::Tensor TorchModel::forward(unsigned nodeIndex, Map<unsigned, torch::Tensor>& activations,
     const Map<unsigned, torch::Tensor>& inputs) {
-    // Return cached result if available
-    if ( activations.exists(nodeIndex) ) 
+    if ( activations.exists(nodeIndex) )
     {
         return activations[nodeIndex];
     }
 
-    if ( nodeIndex >= _nodes.size() ) 
+    if ( nodeIndex >= _nodes.size() )
     {
         throw LunaError(LunaError::INVALID_MODEL_STRUCTURE, (String("Node index not found: ") + std::to_string(nodeIndex)).ascii());
     }
@@ -470,24 +412,21 @@ torch::Tensor TorchModel::forward(unsigned nodeIndex, Map<unsigned, torch::Tenso
     auto& node = _nodes[nodeIndex];
     NodeType nodeType = node->getNodeType();
 
-    // Handle based on node type
-    switch (nodeType) 
+    switch (nodeType)
     {
-        case NodeType::INPUT: 
+        case NodeType::INPUT:
         {
-        // Input nodes get their value from the inputs map
-        unsigned inputIndex = nodeIndex; // Assuming input indices match node indices
-        if ( !inputs.exists(inputIndex) ) 
+        unsigned inputIndex = nodeIndex;
+        if ( !inputs.exists(inputIndex) )
         {
             throw LunaError(LunaError::INVALID_MODEL_STRUCTURE, (String("Input index not found: ") + std::to_string(inputIndex)).ascii());
         }
         activations[nodeIndex] = inputs[inputIndex];
         return inputs[inputIndex];
         }
-        
-        case NodeType::CONSTANT: 
+
+        case NodeType::CONSTANT:
         {
-            // Constants return their fixed value
             torch::Tensor result = node->forward(torch::Tensor());
             activations[nodeIndex] = result;
             return result;
@@ -506,32 +445,30 @@ torch::Tensor TorchModel::forward(unsigned nodeIndex, Map<unsigned, torch::Tenso
         case NodeType::CONCAT:
         case NodeType::CONVTRANSPOSE:
         case NodeType::SLICE: {
-            // Module nodes need to compute their inputs first
-            if ( !_dependencies.exists(nodeIndex) ) 
+            if ( !_dependencies.exists(nodeIndex) )
             {
                 throw LunaError(LunaError::INVALID_MODEL_STRUCTURE, (String("No dependencies found for node at index: ") + std::to_string(nodeIndex)).ascii());
             }
-            
+
             Vector<unsigned> deps = _dependencies[nodeIndex];
-            
-            // Recursively compute all input activations
+
             std::vector<torch::Tensor> inputTensors;
-            for ( unsigned dep : deps ) 
+            for ( unsigned dep : deps )
             {
                 inputTensors.push_back(forward(dep, activations, inputs));
             }
 
-            if ( inputTensors.empty() ) 
+            if ( inputTensors.empty() )
             {
                 throw LunaError(LunaError::INVALID_MODEL_STRUCTURE, (String("No input tensors for node at index: ") + std::to_string(nodeIndex)).ascii());
             }
 
             torch::Tensor result;
-            if ( inputTensors.size() == 1 ) 
+            if ( inputTensors.size() == 1 )
             {
                 result = node->forward(inputTensors[0]);
-            } 
-            else 
+            }
+            else
             {
                 result = node->forward(inputTensors);
             }
@@ -540,62 +477,23 @@ torch::Tensor TorchModel::forward(unsigned nodeIndex, Map<unsigned, torch::Tenso
             return result;
         }
     }
-    
-    // This should never be reached
+
     throw LunaError(LunaError::INVALID_MODEL_STRUCTURE, (String("Unknown node type for node index: ") + std::to_string(nodeIndex)).ascii());
 }
 
-/*
-torch::Tensor TorchModel::forward(const torch::Tensor& input) {
-    // Forward pass through the entire model
-    Map<unsigned, torch::Tensor> activations;
-    Map<unsigned, torch::Tensor> inputs_map;
-    
-    // Set input for input nodes
-    for (unsigned inputIndex : _inputIndices) {
-        inputs_map[inputIndex] = input;
-    }
-    
-    // Forward through all nodes
-    for (unsigned i = 0; i < _nodes.size(); ++i) {
-        forward(i, activations, inputs_map);
-    }
-    
-    // Return output from the output index
-    return activations[_outputIndex];
-}
-
-torch::Tensor TorchModel::forward(const Map<unsigned, torch::Tensor>& inputs) {
-    // Forward pass with pre-defined inputs
-    Map<unsigned, torch::Tensor> activations;
-    
-    // Forward through all nodes
-    for (unsigned i = 0; i < _nodes.size(); ++i) {
-        forward(i, activations, inputs);
-    }
-    
-    // Return output from the output index
-    return activations[_outputIndex];
-}
-*/
-
-
-// NEW: Forward pass that stores and returns activations for all nodes
 Map<unsigned, torch::Tensor> TorchModel::forwardAndStoreActivations(const torch::Tensor& input) {
     Map<unsigned, torch::Tensor> activations;
     Map<unsigned, torch::Tensor> inputs_map;
     torch::Tensor deviceInput = input.to(_device);
-    
-    // Set input for input nodes
+
     for (unsigned inputIndex : _inputIndices) {
         inputs_map[inputIndex] = deviceInput;
     }
-    
-    // Forward through all nodes
+
     for (unsigned i = 0; i < _nodes.size(); ++i) {
         forward(i, activations, inputs_map);
     }
-    
+
     return activations;
 }
 
@@ -606,22 +504,18 @@ Map<unsigned, torch::Tensor> TorchModel::forwardAndStoreActivations(const Map<un
     for (auto it = inputs.begin(); it != inputs.end(); ++it) {
         deviceInputs[it->first] = it->second.to(_device);
     }
-    
-    // Forward through all nodes
+
     for (unsigned i = 0; i < _nodes.size(); ++i) {
         forward(i, activations, deviceInputs);
     }
-    
+
     return activations;
 }
-
-// BOUND MANAGEMENT INTERFACE
 
 void TorchModel::setInputBounds(const BoundedTensor<torch::Tensor>& inputBounds) {
     log(Stringf("[TorchModel] Setting input bounds"));
 
-    // Store the input bounds in the TorchModel
-    // Detach to ensure no gradient history is retained (input bounds are constants)
+    // detach to avoid retaining gradient history
     _inputBounds = BoundedTensor<torch::Tensor>(
         inputBounds.lower().detach().to(_device),
         inputBounds.upper().detach().to(_device));
@@ -629,9 +523,6 @@ void TorchModel::setInputBounds(const BoundedTensor<torch::Tensor>& inputBounds)
     log(Stringf("[TorchModel] Input bounds set with shape: %s",
                 inputBounds.lower().sizes().vec().data()));
 }
-
-
-// CONCRETE BOUND STORAGE METHODS
 
 void TorchModel::setConcreteBounds(unsigned nodeIndex, const BoundedTensor<torch::Tensor>& concreteBounds) {
     validateNodeIndex(nodeIndex);
@@ -647,12 +538,12 @@ void TorchModel::clearConcreteBounds() {
 
 BoundedTensor<torch::Tensor> TorchModel::getConcreteBounds(unsigned nodeIndex) const {
     validateNodeIndex(nodeIndex);
-    
+
     if (!hasConcreteBounds(nodeIndex)) {
-        throw LunaError(LunaError::INVALID_MODEL_STRUCTURE, 
+        throw LunaError(LunaError::INVALID_MODEL_STRUCTURE,
                           Stringf("Concrete bounds not computed for node %u", nodeIndex).ascii());
     }
-    
+
     return _concreteBounds[nodeIndex];
 }
 
@@ -660,8 +551,6 @@ bool TorchModel::hasConcreteBounds(unsigned nodeIndex) const {
     validateNodeIndex(nodeIndex);
     return _concreteBounds.exists(nodeIndex);
 }
-
-// INPUT BOUND ACCESS METHODS
 
 BoundedTensor<torch::Tensor> TorchModel::getInputBounds() const {
     if (!hasInputBounds()) {
@@ -688,15 +577,11 @@ torch::Tensor TorchModel::getInputUpperBounds() const {
     return _inputBounds.upper();
 }
 
-// SPECIFICATION MATRIX MANAGEMENT
-
-
 void TorchModel::setSpecificationMatrix(const torch::Tensor& specMatrix) {
     log(Stringf("[TorchModel] Setting specification matrix with shape [%ld, %ld, %ld]",
                 specMatrix.size(0), specMatrix.size(1), specMatrix.size(2)));
     _specificationMatrix = specMatrix.to(_device);
     _hasSpecificationMatrix = true;
-    // Thresholds remain empty when setting matrix directly
     _specificationThresholds = torch::Tensor();
     _specificationBranchMapping.clear();
     _specificationBranchSizes.clear();
@@ -705,11 +590,11 @@ void TorchModel::setSpecificationMatrix(const torch::Tensor& specMatrix) {
 
 void TorchModel::setSpecificationFromConstraints(const OutputConstraintSet& constraints) {
     log("[TorchModel] Setting specification from OutputConstraintSet");
-    
+
     if (!constraints.hasConstraints()) {
         throw LunaError(LunaError::INVALID_MODEL_STRUCTURE, "OutputConstraintSet is empty");
     }
-    
+
     CMatrixResult result = constraints.toCMatrix();
     _specificationMatrix = result.C.to(_device);
     _specificationThresholds = result.thresholds.to(_device);
@@ -717,7 +602,7 @@ void TorchModel::setSpecificationFromConstraints(const OutputConstraintSet& cons
     _specificationBranchSizes = result.branchSizes;
     _hasORBranches = result.hasORBranches;
     _hasSpecificationMatrix = true;
-    
+
     log(Stringf("[TorchModel] Specification matrix set: shape [%ld, %ld, %ld], %u constraints%s",
                 result.C.size(0), result.C.size(1), result.C.size(2), (unsigned)result.thresholds.size(0),
                 result.hasORBranches ? Stringf(", %u OR branches", result.branchSizes.size()).ascii() : ""));
@@ -778,22 +663,15 @@ bool TorchModel::isSpecVerified(const torch::Tensor& lb, const torch::Tensor& ub
                 lb_flat, ub_flat, thresholds,
                 _specificationBranchMapping,
                 _specificationBranchSizes);
-        // OR of counterexample branches: ALL must be disproved for safety
         for (const auto& branch : branchResults) {
             if (!branch.verified) return false;
         }
         return true;
     }
 
-    // C @ y <= rhs is the counterexample (AND-conjunction).
-    // ANY constraint with lb > threshold breaks the conjunction → verified.
+    // lb > threshold breaks the counterexample AND-conjunction
     return (lb_flat > thresholds).any().item<bool>();
 }
-
-// Configuration is now accessed via LunaConfiguration static members
-// Removed setAnalysisConfig, getAnalysisConfig, setAnalysisMethod, setVerbose methods
-
-// UNIFIED ANALYSIS ENTRY METHOD
 
 BoundedTensor<torch::Tensor> TorchModel::compute_bounds(
     const BoundedTensor<torch::Tensor>& input_bounds,
@@ -804,22 +682,17 @@ BoundedTensor<torch::Tensor> TorchModel::compute_bounds(
 
     log("[TorchModel] compute_bounds() called - unified analysis entry point");
 
-    // Set input bounds
     setInputBounds(input_bounds);
 
-    // Set specification matrix if provided
     if (specification_matrix != nullptr) {
         setSpecificationMatrix(*specification_matrix);
         log("[TorchModel] Specification matrix set from compute_bounds parameter");
     }
-    // If no specification matrix provided but one is already set in TorchModel, it will be used by CROWN analysis
 
-    // Update LunaConfiguration with method and bound flags
     LunaConfiguration::ANALYSIS_METHOD = method;
     LunaConfiguration::COMPUTE_LOWER = bound_lower;
     LunaConfiguration::COMPUTE_UPPER = bound_upper;
 
-    // Dispatch to appropriate analysis method based on configuration
     BoundedTensor<torch::Tensor> result;
 
     if (method == LunaConfiguration::AnalysisMethod::CROWN) {
@@ -828,7 +701,6 @@ BoundedTensor<torch::Tensor> TorchModel::compute_bounds(
     } else if (method == LunaConfiguration::AnalysisMethod::AlphaCROWN) {
         log("[TorchModel] Running AlphaCROWN analysis via compute_bounds");
 
-        // Configure AlphaCROWN optimization flags
         bool optimizeLower = bound_lower && LunaConfiguration::OPTIMIZE_LOWER;
         bool optimizeUpper = bound_upper && LunaConfiguration::OPTIMIZE_UPPER;
 
@@ -844,8 +716,6 @@ BoundedTensor<torch::Tensor> TorchModel::compute_bounds(
     return result;
 }
 
-// ANALYSIS ENTRY METHODS
-
 BoundedTensor<torch::Tensor> TorchModel::runCROWN() {
     if (!hasInputBounds()) {
         throw LunaError(LunaError::INVALID_MODEL_STRUCTURE, "Input bounds must be set before running CROWN analysis");
@@ -856,22 +726,26 @@ BoundedTensor<torch::Tensor> TorchModel::runCROWN() {
 BoundedTensor<torch::Tensor> TorchModel::runCROWN(const BoundedTensor<torch::Tensor>& inputBounds) {
     log("[TorchModel] Running CROWN analysis");
 
-    // Cache node shapes using a single center-point forward pass to avoid shape inference
-    // heuristics in Conv/BN during backward bound propagation.
+    // populate cached shapes in Conv/BN nodes before backward propagation
     setInputBounds(inputBounds);
     cacheForwardShapesFromCenter();
 
-    // Create CROWN analysis instance
     std::unique_ptr<CROWNAnalysis> crownAnalysis = std::make_unique<CROWNAnalysis>(this);
 
-    // Set input bounds and run analysis
     crownAnalysis->setInputBounds(inputBounds);
     crownAnalysis->run();
 
-    // Get output bounds
     BoundedTensor<torch::Tensor> outputBounds = crownAnalysis->getOutputBounds();
 
-    // Store final analysis bounds
+    std::unordered_map<unsigned, std::pair<torch::Tensor, torch::Tensor>> allBounds;
+    for (unsigned i = 0; i < _nodes.size(); ++i) {
+        if (crownAnalysis->hasConcreteBounds(i)) {
+            allBounds[i] = {crownAnalysis->getConcreteLowerBound(i).detach().clone(),
+                            crownAnalysis->getConcreteUpperBound(i).detach().clone()};
+        }
+    }
+    persistIntermediateBounds(allBounds);
+
     setFinalAnalysisBounds(outputBounds);
 
     log("[TorchModel] CROWN analysis completed");
@@ -888,7 +762,7 @@ void TorchModel::cacheForwardShapesFromCenter() {
 
     torch::Tensor center = (lb + ub) / 2.0;
 
-    // Heuristic reshape to common image formats (matches RunFullOptimized.cpp).
+    // heuristic reshape to common image formats
     if (center.numel() == 9408) {
         center = center.view({1, 3, 56, 56});
     } else if (center.numel() == 12288) {
@@ -902,16 +776,13 @@ void TorchModel::cacheForwardShapesFromCenter() {
     }
 
     try {
-        // This will call each node's forward() and populate any internal cached shapes.
         (void)forwardAndStoreActivations(center);
     } catch (...) {
-        // Shape caching is a best-effort optimization; do not fail analysis if it breaks.
+        // best-effort optimization; don't fail analysis
         return;
     }
 }
 
-
-// NEW REFACTORED ALPHA-CROWN IMPLEMENTATION - Pure delegator pattern
 BoundedTensor<torch::Tensor> TorchModel::runAlphaCROWN(bool optimizeLower, bool optimizeUpper) {
     if (!hasInputBounds()) {
         throw LunaError(LunaError::INVALID_MODEL_STRUCTURE, "Input bounds must be set before running AlphaCROWN analysis");
@@ -923,19 +794,18 @@ BoundedTensor<torch::Tensor> TorchModel::runAlphaCROWN(const BoundedTensor<torch
                                                         bool optimizeLower, bool optimizeUpper) {
     log("[TorchModel] Running AlphaCROWN analysis - Delegating to AlphaCROWNAnalysis");
 
-    // Cache node shapes using a center-point forward pass (same as runCROWN).
-    // Without this, Conv/BN nodes lack cached spatial dimensions and the
-    // backward bound propagation can segfault.
+    // populate cached shapes in Conv/BN nodes before backward propagation
     setInputBounds(inputBounds);
     cacheForwardShapesFromCenter();
 
-    // Create AlphaCROWN analysis instance
     std::unique_ptr<AlphaCROWNAnalysis> alphaCrownAnalysis = std::make_unique<AlphaCROWNAnalysis>(this);
 
-    // Set input bounds on the internal CROWN analysis
     alphaCrownAnalysis->getCROWNAnalysis()->setInputBounds(inputBounds);
 
-    // Early stop: check if initial CROWN pass already verifies the property
+    if (_hasPersistedAlphas)
+        alphaCrownAnalysis->seedAlphas(_persistedAlphas);
+
+    // early stop if initial CROWN pass already verifies the property
     if (LunaConfiguration::STOP_CROWN_ON_VERIFIED) {
         alphaCrownAnalysis->initializeAlphaParameters();
 
@@ -953,30 +823,25 @@ BoundedTensor<torch::Tensor> TorchModel::runAlphaCROWN(const BoundedTensor<torch
         }
     }
 
-    // Initialize bound tensors
     torch::Tensor finalLower, finalUpper;
 
-    // Call AlphaCROWN to compute optimized upper bounds (if requested)
     if (optimizeUpper) {
         log("[TorchModel] Requesting optimized upper bounds from AlphaCROWNAnalysis");
         finalUpper = alphaCrownAnalysis->computeOptimizedBounds(LunaConfiguration::BoundSide::Upper);
         log("[TorchModel] Received optimized upper bounds");
     }
 
-    // Call AlphaCROWN to compute optimized lower bounds (if requested)
     if (optimizeLower) {
         log("[TorchModel] Requesting optimized lower bounds from AlphaCROWNAnalysis");
         finalLower = alphaCrownAnalysis->computeOptimizedBounds(LunaConfiguration::BoundSide::Lower);
         log("[TorchModel] Received optimized lower bounds");
     }
 
-    // If neither optimization was requested, fall back to CROWN
     if (!optimizeLower && !optimizeUpper) {
         log("[TorchModel] No optimization requested, delegating to CROWN analysis");
         return runCROWN(inputBounds);
     }
 
-    // If only one bound was requested, use CROWN for the other
     if (!optimizeLower) {
         log("[TorchModel] Computing lower bounds with CROWN (not optimized)");
         auto crownBounds = runCROWN(inputBounds);
@@ -988,17 +853,24 @@ BoundedTensor<torch::Tensor> TorchModel::runAlphaCROWN(const BoundedTensor<torch
         finalUpper = crownBounds.upper();
     }
 
-    // Create final bounded tensor
+    persistAlphas(alphaCrownAnalysis->extractAlphas());
+    auto* crown = alphaCrownAnalysis->getCROWNAnalysis();
+    std::unordered_map<unsigned, std::pair<torch::Tensor, torch::Tensor>> allBounds;
+    for (unsigned i = 0; i < _nodes.size(); ++i) {
+        if (crown->hasConcreteBounds(i)) {
+            allBounds[i] = {crown->getConcreteLowerBound(i).detach().clone(),
+                            crown->getConcreteUpperBound(i).detach().clone()};
+        }
+    }
+    persistIntermediateBounds(allBounds);
+
     BoundedTensor<torch::Tensor> outputBounds(finalLower, finalUpper);
 
-    // Store final analysis bounds
     setFinalAnalysisBounds(outputBounds);
 
     log("[TorchModel] AlphaCROWN analysis completed");
     return outputBounds;
 }
-
-// ANALYSIS BOUNDS STORAGE
 
 void TorchModel::setCROWNBounds(unsigned nodeIndex, const BoundedTensor<torch::Tensor>& bounds) {
     validateNodeIndex(nodeIndex);
@@ -1038,8 +910,6 @@ bool TorchModel::hasAlphaCROWNBounds(unsigned nodeIndex) const {
     return nodeIndex < _nodes.size() && _alphaCrownBounds.exists(nodeIndex);
 }
 
-// FINAL ANALYSIS BOUNDS
-
 void TorchModel::setFinalAnalysisBounds(const BoundedTensor<torch::Tensor>& bounds) {
     _finalAnalysisBounds = bounds;
     _hasFinalAnalysisBounds = true;
@@ -1056,12 +926,111 @@ BoundedTensor<torch::Tensor> TorchModel::getFinalAnalysisBounds() const {
 bool TorchModel::hasFinalAnalysisBounds() const {
     return _hasFinalAnalysisBounds;
 }
- 
+
 void TorchModel::validateNodeIndex(unsigned nodeIndex) const {
     if (nodeIndex >= _nodes.size()) {
         throw LunaError(LunaError::INVALID_MODEL_STRUCTURE,
                           Stringf("Node index %u out of bounds for model with %u nodes", nodeIndex, _nodes.size()).ascii());
     }
+}
+
+void TorchModel::loadState(
+    const BoundedTensor<torch::Tensor>& inputBounds,
+    const std::unordered_map<unsigned, std::pair<torch::Tensor, torch::Tensor>>& intermediateBounds,
+    const std::unordered_map<unsigned,
+        std::unordered_map<std::string, AlphaParameters>>& alphas)
+{
+    setInputBounds(inputBounds);
+    persistIntermediateBounds(intermediateBounds);
+    persistAlphas(alphas);
+    log("[TorchModel] loadState() completed");
+}
+
+void TorchModel::loadProp(const torch::Tensor& C)
+{
+    torch::Tensor spec = C;
+    if (spec.dim() == 2)
+        spec = spec.unsqueeze(1);
+    setSpecificationMatrix(spec);
+    log("[TorchModel] loadProp() completed");
+}
+
+TorchModel::BaBState TorchModel::getState() const
+{
+    BaBState state;
+    for (unsigned i = 0; i < _nodes.size(); ++i) {
+        auto& node = _nodes[i];
+        if (node && node->hasBounds()) {
+            state.allBounds[i] = {node->getLower().detach().clone(),
+                                  node->getUpper().detach().clone()};
+        } else if (_concreteBounds.exists(i)) {
+            state.allBounds[i] = {_concreteBounds[i].lower().detach().clone(),
+                                  _concreteBounds[i].upper().detach().clone()};
+        }
+    }
+    state.alphas = _persistedAlphas;
+    return state;
+}
+
+void TorchModel::persistAlphas(
+    const std::unordered_map<unsigned,
+        std::unordered_map<std::string, AlphaParameters>>& alphas)
+{
+    _persistedAlphas.clear();
+    for (auto& [nodeIdx, perStart] : alphas) {
+        for (auto& [startKey, ap] : perStart) {
+            AlphaParameters copy;
+            copy.alpha = ap.alpha.defined() ? ap.alpha.detach().clone() : torch::Tensor();
+            copy.unstableMask = ap.unstableMask.defined() ? ap.unstableMask.detach().clone() : torch::Tensor();
+            copy.unstableIndices = ap.unstableIndices.defined() ? ap.unstableIndices.detach().clone() : torch::Tensor();
+            copy.specDim = ap.specDim;
+            copy.batchDim = ap.batchDim;
+            copy.outDim = ap.outDim;
+            copy.numUnstable = ap.numUnstable;
+            copy.requiresGrad = ap.requiresGrad;
+            copy.hasSpecDefaultSlot = ap.hasSpecDefaultSlot;
+            _persistedAlphas[nodeIdx][startKey] = std::move(copy);
+        }
+    }
+    _hasPersistedAlphas = !_persistedAlphas.empty();
+}
+
+void TorchModel::persistIntermediateBounds(
+    const std::unordered_map<unsigned, std::pair<torch::Tensor, torch::Tensor>>& bounds)
+{
+    _persistedIntermediateBounds.clear();
+    for (auto& [nodeIdx, pair] : bounds) {
+        _persistedIntermediateBounds[nodeIdx] = {
+            pair.first.detach().clone(),
+            pair.second.detach().clone()
+        };
+    }
+    _hasPersistedIntermediateBounds = !_persistedIntermediateBounds.empty();
+}
+
+bool TorchModel::hasPersistedAlphas() const { return _hasPersistedAlphas; }
+
+bool TorchModel::hasPersistedIntermediateBounds() const { return _hasPersistedIntermediateBounds; }
+
+const std::unordered_map<unsigned,
+    std::unordered_map<std::string, AlphaParameters>>& TorchModel::getPersistedAlphas() const
+{
+    return _persistedAlphas;
+}
+
+const std::unordered_map<unsigned,
+    std::pair<torch::Tensor, torch::Tensor>>& TorchModel::getPersistedIntermediateBounds() const
+{
+    return _persistedIntermediateBounds;
+}
+
+void TorchModel::clearPersistedState()
+{
+    _persistedAlphas.clear();
+    _hasPersistedAlphas = false;
+    _persistedIntermediateBounds.clear();
+    _hasPersistedIntermediateBounds = false;
+    log("[TorchModel] clearPersistedState() completed");
 }
 
 } // namespace NLR

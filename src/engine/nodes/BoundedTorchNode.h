@@ -1,4 +1,14 @@
-// Marabou/src/nlr/BoundedTorchNode.h
+/*********************                                                        */
+/*! \file BoundedTorchNode.h
+ ** \verbatim
+ ** This file is part of the Luna project.
+ ** Copyright (c) 2025-2026 by the authors listed in the file AUTHORS
+ ** in the top-level source directory) and their institutional affiliations.
+ ** All rights reserved. See the file COPYING in the top-level source
+ ** directory for licensing information.\endverbatim
+ **
+ **/
+
 #ifndef __BOUNDED_TORCH_NODE_H__
 #define __BOUNDED_TORCH_NODE_H__
 
@@ -9,7 +19,7 @@
 #include "BoundedTensor.h"
 #include "BoundResult.h"
 
-// Undefine Warning macro to avoid conflict with PyTorch
+// Avoid conflict with PyTorch's Warning symbol
 #ifdef Warning
 #undef Warning
 #endif
@@ -17,7 +27,7 @@
 #include <torch/torch.h>
 #include <memory>
 
-// Redefine Warning macro for CVC4 compatibility
+// CVC4 compatibility
 #ifndef Warning
 #define Warning (! ::CVC4::WarningChannel.isOn()) ? ::CVC4::nullCvc4Stream : ::CVC4::WarningChannel
 #endif
@@ -29,13 +39,11 @@ enum class NodeType { INPUT, CONSTANT, LINEAR, RELU, RESHAPE, IDENTITY, SUB, FLA
 class BoundedTorchNode : public torch::nn::Module {
 public:
     virtual ~BoundedTorchNode() = default;
-    
-    // Node ID getters
+
     virtual NodeType getNodeType() const = 0;
     virtual String getNodeName() const = 0;
     virtual unsigned getNodeIndex() const = 0;
 
-    // Standard PyTorch forward pass (evaluation mode without bound computation)
     virtual torch::Tensor forward(const torch::Tensor& input) = 0;
     virtual torch::Tensor forward(const std::vector<torch::Tensor>& inputs) {
         if (inputs.size() == 1) {
@@ -44,10 +52,10 @@ public:
             throw std::runtime_error("Multi-input forward not implemented for this module");
         }
     }
-    
+
     virtual BoundedTensor<torch::Tensor> computeIntervalBoundPropagation(
         const Vector<BoundedTensor<torch::Tensor>>& inputBounds) = 0;
-    
+
     virtual void boundBackward(
         const BoundA& last_lA,
         const BoundA& last_uA,
@@ -57,16 +65,13 @@ public:
         torch::Tensor& ubias
     ) = 0;
 
-    // Node Info
     virtual unsigned getInputSize() const = 0;
     virtual unsigned getOutputSize() const = 0;
     virtual bool isPerturbed() const = 0;
-    
-    // Size setters for initialization
+
     virtual void setInputSize(unsigned size) = 0;
     virtual void setOutputSize(unsigned size) = 0;
 
-    // Node state
     virtual void setNodeIndex(unsigned index) = 0;
     virtual void setNodeName(const String& name) = 0;
 
@@ -75,7 +80,6 @@ public:
         this->to(device);
     }
 
-    // Bound accessors (matching auto_LiRPA's property pattern)
     const torch::Tensor& getLower() const { return _lower; }
     const torch::Tensor& getUpper() const { return _upper; }
 
@@ -107,10 +111,7 @@ public:
     bool isUpperBoundCurrent() const { return _isUpperBoundCurrent; }
     bool hasBounds() const { return _isLowerBoundCurrent && _isUpperBoundCurrent; }
 
-    // Which inputs require bounds for this node (e.g., ReLU needs bounds on input 0)
     const Vector<unsigned>& getRequiresInputBounds() const { return _requiresInputBounds; }
-
-    // Whether this node can use IBP for intermediate bounds (e.g., ReLU can)
     bool isIBPIntermediate() const { return _ibpIntermediate; }
 
 protected:
@@ -120,15 +121,13 @@ protected:
     unsigned _output_size;
     torch::Device _device{torch::kCPU};
 
-    // Bound storage (models auto_LiRPA's node.lower/node.upper pattern)
     torch::Tensor _lower;
     torch::Tensor _upper;
     bool _isLowerBoundCurrent{false};
     bool _isUpperBoundCurrent{false};
 
-    // Lazy computation flags (set in derived class constructors)
-    Vector<unsigned> _requiresInputBounds;  // Which input indices need bounds
-    bool _ibpIntermediate{false};           // Can use IBP for this node's bounds
+    Vector<unsigned> _requiresInputBounds;
+    bool _ibpIntermediate{false};
 };
 
 } // namespace NLR

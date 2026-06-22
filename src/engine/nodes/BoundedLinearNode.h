@@ -1,4 +1,14 @@
-// Marabou/src/nlr/bounded_modules/TorchLinearModule.h
+/*********************                                                        */
+/*! \file BoundedLinearNode.h
+ ** \verbatim
+ ** This file is part of the Luna project.
+ ** Copyright (c) 2025-2026 by the authors listed in the file AUTHORS
+ ** in the top-level source directory) and their institutional affiliations.
+ ** All rights reserved. See the file COPYING in the top-level source
+ ** directory for licensing information.\endverbatim
+ **
+ **/
+
 #ifndef __BOUNDED_LINEAR_NODE_H__
 #define __BOUNDED_LINEAR_NODE_H__
 
@@ -8,18 +18,15 @@ namespace NLR {
 
 class BoundedLinearNode : public NLR::BoundedTorchNode {
 public:
-    BoundedLinearNode(const torch::nn::Linear& linearModule, 
+    BoundedLinearNode(const torch::nn::Linear& linearModule,
         float alpha = 1.0f, const String& name = "");
-    
-    // Node identification
+
     NLR::NodeType getNodeType() const override { return NLR::NodeType::LINEAR; }
     String getNodeName() const override { return _nodeName; }
     unsigned getNodeIndex() const override { return _nodeIndex; }
-    
-    // Forward pass
+
     torch::Tensor forward(const torch::Tensor& input) override;
-    
-    // Backward bound propagation
+
     void boundBackward(
         const BoundA& last_lA,
         const BoundA& last_uA,
@@ -28,47 +35,39 @@ public:
         torch::Tensor& lbias,
         torch::Tensor& ubias
     ) override;
-    
-    // IBP
+
     BoundedTensor<torch::Tensor> computeIntervalBoundPropagation(
         const Vector<BoundedTensor<torch::Tensor>>& inputBounds) override;
-    
-    // Node information
+
     unsigned getInputSize() const override;
     unsigned getOutputSize() const override;
     bool isPerturbed() const override { return true; }
-    
-    // Size validation methods
+
     bool hasInputSize() const { return _input_size > 0; }
     bool hasOutputSize() const { return _output_size > 0; }
-    
-    // Size setters for initialization
+
     void setInputSize(unsigned size) override;
     void setOutputSize(unsigned size) override;
-    
-    
-    // Node state
+
     void setNodeIndex(unsigned index) override { _nodeIndex = index; }
     void setNodeName(const String& name) override { _nodeName = name; }
     void moveToDevice(const torch::Device& device) override;
-    
-    // IBP computation methods
+
     torch::Tensor computeLinearIBPLowerBound(const torch::Tensor& inputLowerBound, const torch::Tensor& inputUpperBound);
     torch::Tensor computeLinearIBPUpperBound(const torch::Tensor& inputLowerBound, const torch::Tensor& inputUpperBound);
-    
-    // Access to the linear module
+
     const torch::nn::Linear& getLinearModule() const { return _linearModule; }
 
 private:
     torch::nn::Linear _linearModule;
     float _alpha;
 
-    // Cached weight/bias on target device (avoids repeated .to(device) calls)
+    // Avoids repeated .to(device) calls
     mutable torch::Tensor _cached_weight;    // alpha * weight, on target device
-    mutable torch::Tensor _cached_bias;      // bias on target device (or undefined)
+    mutable torch::Tensor _cached_bias;
     mutable torch::Device _cached_device{torch::kCPU};
 
-    // Ensure cached weight/bias are on the given device. Fast no-op if already cached.
+    // Fast no-op if already cached
     void ensureWeightsOnDevice(const torch::Device& device) const;
 };
 

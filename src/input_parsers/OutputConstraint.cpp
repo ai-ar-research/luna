@@ -1,3 +1,14 @@
+/*********************                                                        */
+/*! \file OutputConstraint.cpp
+ ** \verbatim
+ ** This file is part of the Luna project.
+ ** Copyright (c) 2025-2026 by the authors listed in the file AUTHORS
+ ** in the top-level source directory) and their institutional affiliations.
+ ** All rights reserved. See the file COPYING in the top-level source
+ ** directory for licensing information.\endverbatim
+ **
+ **/
+
 #include "OutputConstraint.h"
 #include "InputParserError.h"
 #include "MStringf.h"
@@ -67,7 +78,6 @@ CMatrixResult OutputConstraintSet::toCMatrix() const
                                "Output dimension must be set before calling toCMatrix()");
     }
 
-    // Handle OR disjunction case: concatenate all constraints from all branches
     if (_hasORDisjunction)
     {
         if (_orBranches.size() == 0)
@@ -76,7 +86,6 @@ CMatrixResult OutputConstraintSet::toCMatrix() const
                                    "OR disjunction flag is set but no branches exist");
         }
 
-        // Count total constraints across all branches
         unsigned totalConstraints = 0;
         for (unsigned branchId = 0; branchId < _orBranches.size(); ++branchId)
         {
@@ -90,12 +99,9 @@ CMatrixResult OutputConstraintSet::toCMatrix() const
                                    "No constraints in OR branches to convert to C matrix");
         }
 
-        // Create C matrix of shape (total_constraints, 1, output_dim)
         result.C = torch::zeros({(long)totalConstraints, 1, (long)_outputDim}, torch::kFloat32);
         result.thresholds = torch::zeros({(long)totalConstraints}, torch::kFloat32);
         result.hasORBranches = true;
-
-        // Iterate through branches and constraints, populating the batched matrix
         unsigned rowIndex = 0;
         for (unsigned branchId = 0; branchId < _orBranches.size(); ++branchId)
         {
@@ -104,7 +110,6 @@ CMatrixResult OutputConstraintSet::toCMatrix() const
             {
                 const OutputConstraint& constraint = branch[i];
 
-                // Fill in coefficients for this constraint
                 for (unsigned j = 0; j < constraint.terms.size(); ++j)
                 {
                     const OutputTerm& term = constraint.terms[j];
@@ -116,14 +121,11 @@ CMatrixResult OutputConstraintSet::toCMatrix() const
                                                        term.outputIndex, _outputDim).ascii());
                     }
 
-                    // C[rowIndex, 0, outputIndex] = coefficient
                     result.C[rowIndex][0][term.outputIndex] = static_cast<float>(term.coefficient);
                 }
 
-                // Set threshold
                 result.thresholds[rowIndex] = static_cast<float>(constraint.threshold);
 
-                // Map this row to its branch
                 result.branchMapping.append(branchId);
 
                 ++rowIndex;
@@ -132,7 +134,6 @@ CMatrixResult OutputConstraintSet::toCMatrix() const
     }
     else
     {
-        // No OR disjunction: use regular constraints
         unsigned numConstraints = _constraints.size();
         if (numConstraints == 0)
         {
@@ -140,7 +141,6 @@ CMatrixResult OutputConstraintSet::toCMatrix() const
                                    "No constraints to convert to C matrix");
         }
 
-        // Create C matrix of shape (num_constraints, 1, output_dim)
         result.C = torch::zeros({(long)numConstraints, 1, (long)_outputDim}, torch::kFloat32);
         result.thresholds = torch::zeros({(long)numConstraints}, torch::kFloat32);
         result.hasORBranches = false;
@@ -161,7 +161,6 @@ CMatrixResult OutputConstraintSet::toCMatrix() const
                                                    term.outputIndex, _outputDim).ascii());
                 }
 
-                // C[i, 0, outputIndex] = coefficient
                 result.C[i][0][term.outputIndex] = static_cast<float>(term.coefficient);
             }
 
@@ -175,10 +174,6 @@ CMatrixResult OutputConstraintSet::toCMatrix() const
 
 torch::Tensor OutputConstraintSet::identityC(unsigned outputDim)
 {
-    // Create identity matrix of shape (output_dim, 1, output_dim)
-    // Each row i has a 1.0 at position i, representing the constraint
-    // that we want to bound output i directly
-
     torch::Tensor C = torch::zeros({(long)outputDim, 1, (long)outputDim}, torch::kFloat32);
 
     for (unsigned i = 0; i < outputDim; ++i)
@@ -203,7 +198,6 @@ Vector<BranchResult> OutputConstraintSet::evaluateORBranches(
         return results;
     }
 
-    // Check tensor dimensions
     int totalRows = lowerBounds.size(0);
     if (upperBounds.size(0) != totalRows || thresholds.size(0) != totalRows ||
         (int)branchMapping.size() != totalRows)
@@ -212,7 +206,6 @@ Vector<BranchResult> OutputConstraintSet::evaluateORBranches(
                                "Dimension mismatch in evaluateORBranches: all inputs must have same size");
     }
 
-    // Build mapping from branch ID to row indices
     Vector<Vector<unsigned>> branchRows;
     for (unsigned branchId = 0; branchId < branchSizes.size(); ++branchId)
     {
@@ -231,7 +224,6 @@ Vector<BranchResult> OutputConstraintSet::evaluateORBranches(
         branchRows[branchId].append(static_cast<unsigned>(rowIndex));
     }
 
-    // Evaluate each branch
     for (unsigned branchId = 0; branchId < branchSizes.size(); ++branchId)
     {
         BranchResult branchResult;
@@ -242,13 +234,11 @@ Vector<BranchResult> OutputConstraintSet::evaluateORBranches(
 
         if (branchRows[branchId].size() == 0)
         {
-            // Empty branch: cannot be verified or refuted
             results.append(branchResult);
             continue;
         }
 
-        // Check if branch is disproved: ANY row with lb > threshold breaks
-        // the AND-conjunction of counterexample conditions for this branch.
+        // lb > threshold disproves the AND-conjunction for this branch
         bool branchDisproved = false;
         for (unsigned i = 0; i < branchRows[branchId].size(); ++i)
         {
@@ -264,8 +254,7 @@ Vector<BranchResult> OutputConstraintSet::evaluateORBranches(
         }
         branchResult.verified = branchDisproved;
 
-        // Check if branch counterexample is always satisfiable: ALL rows have
-        // ub <= threshold, meaning every constraint in the AND is always true.
+        // ub <= threshold on all rows means counterexample is always satisfiable
         bool branchAlwaysSatisfiable = true;
         for (unsigned i = 0; i < branchRows[branchId].size(); ++i)
         {

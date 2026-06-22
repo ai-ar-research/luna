@@ -1,3 +1,14 @@
+/*********************                                                        */
+/*! \file LunaConfiguration.cpp
+ ** \verbatim
+ ** This file is part of the Luna project.
+ ** Copyright (c) 2025-2026 by the authors listed in the file AUTHORS
+ ** in the top-level source directory) and their institutional affiliations.
+ ** All rights reserved. See the file COPYING in the top-level source
+ ** directory for licensing information.\endverbatim
+ **
+ **/
+
 #include "LunaConfiguration.h"
 #include "MString.h"
 #include "ConfigurationError.h"
@@ -8,16 +19,12 @@
 #include <torch/torch.h>
 #include <string>
 
-// Initialize static members with default values
-
-// Analysis settings
-LunaConfiguration::AnalysisMethod LunaConfiguration::ANALYSIS_METHOD = 
+LunaConfiguration::AnalysisMethod LunaConfiguration::ANALYSIS_METHOD =
     LunaConfiguration::AnalysisMethod::CROWN;
 bool LunaConfiguration::COMPUTE_LOWER = true;
 bool LunaConfiguration::COMPUTE_UPPER = true;
 bool LunaConfiguration::VERBOSE = false;
 
-// Alpha-CROWN settings
 unsigned LunaConfiguration::ALPHA_ITERATIONS = 20;
 float LunaConfiguration::ALPHA_LR = 0.5f;
 float LunaConfiguration::ALPHA_LR_DECAY = 0.98f;
@@ -26,22 +33,20 @@ bool LunaConfiguration::USE_SHARED_ALPHA = false;
 unsigned LunaConfiguration::EARLY_STOP_PATIENCE = 10;
 bool LunaConfiguration::FIX_INTERM_BOUNDS = true;
 bool LunaConfiguration::STABILIZE_INTERMEDIATE_BOUNDS = true;
+bool LunaConfiguration::RECOMPUTE_INTERMEDIATE_BOUNDS = false;
 String LunaConfiguration::OPTIMIZER = "adam";
 float LunaConfiguration::START_SAVE_BEST = 0.5f;
-LunaConfiguration::BoundSide LunaConfiguration::BOUND_SIDE = 
+LunaConfiguration::BoundSide LunaConfiguration::BOUND_SIDE =
     LunaConfiguration::BoundSide::Lower;
 bool LunaConfiguration::OPTIMIZE_LOWER = true;
 bool LunaConfiguration::OPTIMIZE_UPPER = false;
 bool LunaConfiguration::STOP_CROWN_ON_VERIFIED = true;
 bool LunaConfiguration::STOP_ALPHA_ON_VERIFIED = true;
 
-
-// CROWN settings
 bool LunaConfiguration::ENABLE_FIRST_LINEAR_IBP = true;
 bool LunaConfiguration::USE_STANDARD_CROWN = true;
 bool LunaConfiguration::USE_PATCHES_MODE = true;
 
-// Runtime options
 int LunaConfiguration::VERBOSITY = 0;
 int LunaConfiguration::TIMEOUT = 0;
 int LunaConfiguration::SEED = 1;
@@ -49,20 +54,17 @@ int LunaConfiguration::NUM_BLAS_THREADS = 1;
 String LunaConfiguration::INPUT_FILE_PATH = "";
 String LunaConfiguration::PROPERTY_FILE_PATH = "";
 
-// Device options
 bool LunaConfiguration::USE_CUDA = torch::cuda::is_available();
 int LunaConfiguration::CUDA_DEVICE_ID = 0;
 torch::Device LunaConfiguration::DEVICE =
     LunaConfiguration::USE_CUDA ? torch::Device(torch::kCUDA, CUDA_DEVICE_ID)
                                  : torch::Device(torch::kCPU);
 
-// Utility constants (replacing GlobalConfiguration constants)
 const double LunaConfiguration::DEFAULT_EPSILON_FOR_COMPARISONS = 0.0000000001;
 const unsigned LunaConfiguration::DEFAULT_DOUBLE_TO_STRING_PRECISION = 10;
 bool LunaConfiguration::NETWORK_LEVEL_REASONER_LOGGING = false;
 const double LunaConfiguration::SIGMOID_CUTOFF_CONSTANT = 20.0;
 
-// Helper methods for string conversion
 String LunaConfiguration::analysisMethodToString(AnalysisMethod method)
 {
     switch (method) {
@@ -111,13 +113,11 @@ LunaConfiguration::BoundSide LunaConfiguration::stringToBoundSide(const String& 
 
 void LunaConfiguration::resetToDefaults()
 {
-    // Analysis settings
     ANALYSIS_METHOD = AnalysisMethod::CROWN;
     COMPUTE_LOWER = true;
     COMPUTE_UPPER = true;
     VERBOSE = false;
 
-    // Alpha-CROWN settings
     ALPHA_ITERATIONS = 20;
     ALPHA_LR = 0.5f;
     ALPHA_LR_DECAY = 0.98f;
@@ -126,6 +126,7 @@ void LunaConfiguration::resetToDefaults()
     EARLY_STOP_PATIENCE = 10;
     FIX_INTERM_BOUNDS = true;
     STABILIZE_INTERMEDIATE_BOUNDS = true;
+    RECOMPUTE_INTERMEDIATE_BOUNDS = false;
     OPTIMIZER = "adam";
     START_SAVE_BEST = 0.5f;
     BOUND_SIDE = BoundSide::Lower;
@@ -134,12 +135,10 @@ void LunaConfiguration::resetToDefaults()
     STOP_ALPHA_ON_VERIFIED = true;
     STOP_CROWN_ON_VERIFIED = true;
 
-    // CROWN settings
     ENABLE_FIRST_LINEAR_IBP = true;
     USE_STANDARD_CROWN = true;
     USE_PATCHES_MODE = true;
 
-    // Runtime options
     VERBOSITY = 2;
     TIMEOUT = 0;
     SEED = 1;
@@ -147,13 +146,10 @@ void LunaConfiguration::resetToDefaults()
     INPUT_FILE_PATH = "";
     PROPERTY_FILE_PATH = "";
 
-    // Device options
     USE_CUDA = torch::cuda::is_available();
     CUDA_DEVICE_ID = 0;
     updateDeviceFromFlags();
-    
-    // Utility constants are const, so they don't need resetting
-    // NETWORK_LEVEL_REASONER_LOGGING can be reset if needed
+
     NETWORK_LEVEL_REASONER_LOGGING = false;
 }
 
@@ -161,14 +157,12 @@ void LunaConfiguration::print()
 {
     printf("*** LUNA Configuration ***\n");
 
-    // Analysis settings
     printf("Analysis Settings:\n");
     printf("  ANALYSIS_METHOD: %s\n", analysisMethodToString(ANALYSIS_METHOD).ascii());
     printf("  COMPUTE_LOWER: %s\n", COMPUTE_LOWER ? "true" : "false");
     printf("  COMPUTE_UPPER: %s\n", COMPUTE_UPPER ? "true" : "false");
     printf("  VERBOSE: %s\n", VERBOSE ? "true" : "false");
-    
-    // Alpha-CROWN settings
+
     printf("\nAlpha-CROWN Settings:\n");
     printf("  ALPHA_ITERATIONS: %u\n", ALPHA_ITERATIONS);
     printf("  ALPHA_LR: %.3f\n", ALPHA_LR);
@@ -186,13 +180,11 @@ void LunaConfiguration::print()
     printf("  STOP_CROWN_ON_VERIFIED: %s\n", STOP_CROWN_ON_VERIFIED ? "true" : "false");
     printf("  STOP_ALPHA_ON_VERIFIED: %s\n", STOP_ALPHA_ON_VERIFIED ? "true" : "false");
 
-    // CROWN settings
     printf("\nCROWN Settings:\n");
     printf("  ENABLE_FIRST_LINEAR_IBP: %s\n", ENABLE_FIRST_LINEAR_IBP ? "true" : "false");
     printf("  USE_STANDARD_CROWN: %s\n", USE_STANDARD_CROWN ? "true" : "false");
     printf("  USE_PATCHES_MODE: %s\n", USE_PATCHES_MODE ? "true" : "false");
-    
-    // Runtime options
+
     printf("\nRuntime Options:\n");
     printf("  VERBOSITY: %d\n", VERBOSITY);
     printf("  TIMEOUT: %d\n", TIMEOUT);
@@ -201,12 +193,11 @@ void LunaConfiguration::print()
     printf("  INPUT_FILE_PATH: %s\n", INPUT_FILE_PATH.ascii());
     printf("  PROPERTY_FILE_PATH: %s\n", PROPERTY_FILE_PATH.ascii());
 
-    // Device options
     printf("\nDevice Options:\n");
     printf("  USE_CUDA: %s\n", USE_CUDA ? "true" : "false");
     printf("  CUDA_DEVICE_ID: %d\n", CUDA_DEVICE_ID);
     printf("  DEVICE: %s\n", DEVICE.str().c_str());
-    
+
 }
 
 torch::Device LunaConfiguration::getDevice()
@@ -230,56 +221,44 @@ void LunaConfiguration::parseArgs(int argc, char** argv)
 {
     for (int i = 1; i < argc; ++i) {
         String arg(argv[i]);
-        
-        // Method selection
+
         if (arg == "--method" && i + 1 < argc) {
             ANALYSIS_METHOD = stringToAnalysisMethod(String(argv[++i]));
         }
-        // Alpha-CROWN iterations
         else if (arg == "--iterations" && i + 1 < argc) {
             ALPHA_ITERATIONS = static_cast<unsigned>(atoi(argv[++i]));
         }
-        // Learning rate
         else if (arg == "--lr" && i + 1 < argc) {
             ALPHA_LR = static_cast<float>(atof(argv[++i]));
         }
-        // Learning rate decay
         else if (arg == "--lr-decay" && i + 1 < argc) {
             ALPHA_LR_DECAY = static_cast<float>(atof(argv[++i]));
         }
-        // Timeout
         else if (arg == "--timeout" && i + 1 < argc) {
             TIMEOUT = atoi(argv[++i]);
         }
-        // Seed
         else if (arg == "--seed" && i + 1 < argc) {
             SEED = atoi(argv[++i]);
         }
-        // Verbosity level
         else if (arg == "--verbosity" && i + 1 < argc) {
             VERBOSITY = atoi(argv[++i]);
         }
-        // Verbose
         else if (arg == "--verbose") {
             VERBOSE = true;
         }
-        // Quiet
         else if (arg == "--quiet") {
             VERBOSE = false;
         }
-        // Input file
         else if (arg == "--input" && i + 1 < argc) {
             INPUT_FILE_PATH = String(argv[++i]);
         }
-        // Property file
         else if (arg == "--property" && i + 1 < argc) {
             PROPERTY_FILE_PATH = String(argv[++i]);
         }
-        // VNN-LIB file (alias for --property)
+        // alias for --property
         else if (arg == "--vnnlib" && i + 1 < argc) {
             PROPERTY_FILE_PATH = String(argv[++i]);
         }
-        // Device selection (explicit)
         else if (arg == "--device" && i + 1 < argc) {
             String deviceStr(argv[++i]);
             if (deviceStr == "cpu" || deviceStr == "CPU") {
@@ -296,84 +275,66 @@ void LunaConfiguration::parseArgs(int argc, char** argv)
             }
             updateDeviceFromFlags();
         }
-        // CUDA on
         else if (arg == "--cuda") {
             USE_CUDA = true;
             updateDeviceFromFlags();
         }
-        // CPU only
         else if (arg == "--cpu") {
             USE_CUDA = false;
             updateDeviceFromFlags();
         }
-        // CUDA device id
         else if (arg == "--cuda-device" && i + 1 < argc) {
             CUDA_DEVICE_ID = atoi(argv[++i]);
             updateDeviceFromFlags();
         }
-        // Optimize lower
         else if (arg == "--optimize-lower") {
             OPTIMIZE_LOWER = true;
         }
-        // No optimize lower
         else if (arg == "--no-optimize-lower") {
             OPTIMIZE_LOWER = false;
         }
-        // Optimize upper
         else if (arg == "--optimize-upper") {
             OPTIMIZE_UPPER = true;
         }
-        // No optimize upper
         else if (arg == "--no-optimize-upper") {
             OPTIMIZE_UPPER = false;
         }
-        // Stop bound computation if spec if verified on init CROWN
         else if (arg == "--stop-crown-verified") {
             STOP_CROWN_ON_VERIFIED = true;
         }
-        // DO NOT stop bound computation if spec if verified on init CROWN
         else if (arg == "--no-stop-crown-verified") {
             STOP_CROWN_ON_VERIFIED = false;
         }
-        // Stop bound computation if spec if verified during alphaCROWN iteration
         else if (arg == "--stop-alpha-verified") {
             STOP_ALPHA_ON_VERIFIED = true;
         }
-        // Stop bound computation if spec if verified on init CROWN
         else if (arg == "--no-stop-alpha-verified") {
             STOP_ALPHA_ON_VERIFIED = false;
         }
-        // Enable first linear IBP
         else if (arg == "--enable-first-linear-ibp") {
             ENABLE_FIRST_LINEAR_IBP = true;
         }
-        // Disable first linear IBP
         else if (arg == "--disable-first-linear-ibp") {
             ENABLE_FIRST_LINEAR_IBP = false;
         }
-        // Stabilize intermediate bounds (STE)
         else if (arg == "--stabilize") {
             STABILIZE_INTERMEDIATE_BOUNDS = true;
         }
         else if (arg == "--no-stabilize") {
             STABILIZE_INTERMEDIATE_BOUNDS = false;
         }
-        // Standard CROWN
         else if (arg == "--standard-crown") {
             USE_STANDARD_CROWN = true;
         }
-        // CROWN-IBP
         else if (arg == "--crown-ibp") {
             USE_STANDARD_CROWN = false;
         }
-        // Patches mode for conv backward
         else if (arg == "--patches") {
             USE_PATCHES_MODE = true;
         }
         else if (arg == "--no-patches") {
             USE_PATCHES_MODE = false;
         }
-        // Help
         else if (arg == "--help" || arg == "-h") {
             printf("LUNA Configuration Options:\n");
             printf("  --method <crown|alpha-crown>    Analysis method (default: crown)\n");

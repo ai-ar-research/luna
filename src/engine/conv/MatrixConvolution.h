@@ -1,4 +1,14 @@
-// MatrixConvolution.h - Matrix-based convolution operations
+/*********************                                                        */
+/*! \file MatrixConvolution.h
+ ** \verbatim
+ ** This file is part of the Luna project.
+ ** Copyright (c) 2025-2026 by the authors listed in the file AUTHORS
+ ** in the top-level source directory) and their institutional affiliations.
+ ** All rights reserved. See the file COPYING in the top-level source
+ ** directory for licensing information.\endverbatim
+ **
+ **/
+
 #ifndef __MATRIX_CONVOLUTION_H__
 #define __MATRIX_CONVOLUTION_H__
 
@@ -9,8 +19,6 @@ namespace NLR {
 
 class MatrixConvolution {
 public:
-    // Im2col transformation - converts input patches to columns for matrix multiplication
-    // Based on auto_LiRPA's matrix mode implementation
     static torch::Tensor im2col(
         const torch::Tensor& input,
         const std::vector<int>& kernel_size,
@@ -20,7 +28,6 @@ public:
         int groups = 1
     );
 
-    // Col2im transformation - reverse of im2col, used in backward pass
     static torch::Tensor col2im(
         const torch::Tensor& col,
         const std::vector<int>& output_size,
@@ -31,7 +38,6 @@ public:
         int groups = 1
     );
 
-    // Compute output shape for convolution
     static std::vector<int> computeConvOutputShape(
         const std::vector<int>& input_shape,
         const std::vector<int>& kernel_size,
@@ -40,7 +46,6 @@ public:
         const std::vector<int>& dilation
     );
 
-    // Compute output padding for transpose convolution
     static std::vector<int> computeTransposeOutputPadding(
         const std::vector<int>& input_shape,
         const std::vector<int>& output_shape,
@@ -50,19 +55,17 @@ public:
         const std::vector<int>& dilation
     );
 
-    // Matrix multiplication for convolution forward pass
     static torch::Tensor matrixConvForward(
-        const torch::Tensor& input_matrix,   // After im2col
-        const torch::Tensor& weight,          // Conv weight
-        const torch::Tensor& bias,           // Conv bias (optional)
-        const std::vector<int>& output_shape  // Expected output shape
+        const torch::Tensor& input_matrix,
+        const torch::Tensor& weight,
+        const torch::Tensor& bias,
+        const std::vector<int>& output_shape
     );
 
-    // Matrix multiplication for convolution backward pass (transpose conv)
     static torch::Tensor matrixConvBackward(
-        const torch::Tensor& grad_output,     // Gradient from next layer
-        const torch::Tensor& weight,          // Conv weight
-        const std::vector<int>& input_shape,  // Original input shape
+        const torch::Tensor& grad_output,
+        const torch::Tensor& weight,
+        const std::vector<int>& input_shape,
         const std::vector<int>& stride,
         const std::vector<int>& padding,
         const std::vector<int>& dilation,
@@ -70,7 +73,6 @@ public:
     );
 
 private:
-    // Helper function to unfold input tensor for im2col
     static torch::Tensor unfoldInput(
         const torch::Tensor& input,
         const std::vector<int>& kernel_size,
@@ -79,7 +81,6 @@ private:
         const std::vector<int>& dilation
     );
 
-    // Helper function to fold columns back to spatial dimensions
     static torch::Tensor foldColumns(
         const torch::Tensor& col,
         const std::vector<int>& output_size,
