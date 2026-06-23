@@ -1,7 +1,19 @@
+/*********************                                                        */
+/*! \file AlphaCROWNAnalysis.h
+ ** \verbatim
+ ** This file is part of the Luna project.
+ ** Copyright (c) 2025-2026 by the authors listed in the file AUTHORS
+ ** in the top-level source directory) and their institutional affiliations.
+ ** All rights reserved. See the file COPYING in the top-level source
+ ** directory for licensing information.\endverbatim
+ **
+ **/
+
 #ifndef __AlphaCROWNAnalysis_h__
 #define __AlphaCROWNAnalysis_h__
 
 #include "CROWNAnalysis.h"
+#include "AlphaParameters.h"
 #include "BoundedTensor.h"
 #include "Map.h"
 #include "Vector.h"
@@ -15,47 +27,27 @@
 
 namespace NLR {
 
-// Forward declarations
 class BoundedAlphaOptimizeNode;
 class TorchModel;
-
-// BoundSide enum and AlphaCROWNConfig struct moved to LunaConfiguration
-// Use LunaConfiguration::BoundSide and LunaConfiguration static members
-
-// Structure to hold alpha parameters for a single layer and start
-struct AlphaParameters {
-    torch::Tensor alpha;        // Shape: [2, spec_dim, 1, num_unstable] - only unstable neurons
-    torch::Tensor unstableMask; // Shape: [outDim] - bool mask indicating unstable neurons
-    torch::Tensor unstableIndices; // Shape: [num_unstable] - indices of unstable neurons
-    int specDim{0};             // Number of specifications being verified
-    int batchDim{1};            // Batch dimension (typically 1)
-    int outDim{0};              // Total number of neurons in the layer
-    int numUnstable{0};         // Number of unstable neurons (alpha.size(-1))
-    bool requiresGrad{true};    // Whether gradients are enabled
-    bool hasSpecDefaultSlot{false}; // Sparse-spec alpha includes default slot
-};
 
 class AlphaCROWNAnalysis
 {
 public:
     AlphaCROWNAnalysis(TorchModel* torchModel);
-    
+
     ~AlphaCROWNAnalysis();
-    
+
     void initializeAlphaParameters();
 
-    // Result structure for getAlphaForNodeAllSpecs
     struct AlphaResult {
-        torch::Tensor alpha;          // [2, spec, 1, numUnstable] - alpha values for unstable neurons only
-        torch::Tensor unstableMask;   // [outDim] - bool mask of unstable neurons
-        torch::Tensor unstableIndices;// [numUnstable] - indices of unstable neurons
-        int numUnstable{0};           // Number of unstable neurons
-        int outDim{0};                // Total number of neurons
-        bool hasSpecDefaultSlot{false}; // Alpha includes default spec slot
+        torch::Tensor alpha;
+        torch::Tensor unstableMask;
+        torch::Tensor unstableIndices;
+        int numUnstable{0};
+        int outDim{0};
+        bool hasSpecDefaultSlot{false};
     };
 
-    // Fetch alpha slice for ALL specs at once for a specific start.
-    // Returns AlphaResult with alpha [2, spec, numUnstable] and mapping info
     AlphaResult getAlphaForNodeAllSpecs(
         unsigned nodeIndex,
         const std::string& startKey,
@@ -67,65 +59,59 @@ public:
     void setOptimizationStage(const std::string& stage);
 
     std::string getOptimizationStage() const { return _optimizationStage; }
-    
+
     unsigned getNumOptimizableNodes() const;
-    
+
     std::vector<unsigned> getOptimizableNodeIndices() const;
-    
+
     void resetForOptimization();
 
-    // Reset alpha parameters from CROWN slopes for fresh optimization pass
     void resetAlphasFromCROWNSlopes(bool isLower);
 
     CROWNAnalysis* getCROWNAnalysis() const;
     TorchModel* getTorchModel() const;
 
-    // NEW REFACTORED ENTRY METHOD - Returns optimized bounds for specified side
-    // This method handles the complete optimization loop internally
     torch::Tensor computeOptimizedBounds(LunaConfiguration::BoundSide side);
 
-    // Preserve intermediate bounds for reuse in next optimization call
-    // Call this after first optimization (e.g., upper) to reuse state for second (e.g., lower)
     void preserveIntermediateBoundsForNextOptimization();
 
-    // Check if intermediate bounds are available for reuse
     bool hasIntermediateBoundsForReuse() const { return _reuseIntermediateBounds; }
 
+    void seedAlphas(const std::unordered_map<unsigned,
+        std::unordered_map<std::string, AlphaParameters>>& alphas);
+    void seedIntermediateBounds(
+        const std::unordered_map<unsigned, std::pair<torch::Tensor, torch::Tensor>>& bounds);
+    std::unordered_map<unsigned,
+        std::unordered_map<std::string, AlphaParameters>> extractAlphas() const;
 
     void clipAlphaParameters();
 
-    // Alpha parameter collection (needed by TorchModel for optimizer creation)
     std::vector<torch::Tensor> collectAlphaParameters();
-    // Configuration parameters
+
     bool isAlphaEnabled() const { return _alphaEnabled; }
     void setAlphaEnabled(bool enabled) { _alphaEnabled = enabled; }
-    
+
     bool isInitialized() const { return _initialized; }
-    
+
     unsigned getIterations() const { return _iteration; }
     void setIterations(unsigned iterations) { _iteration = iterations; }
-    
+
     float getLearningRate() const { return _learningRate; }
     void setLearningRate(float lr) { _learningRate = lr; }
     void decayLearningRate() { _learningRate *= LunaConfiguration::ALPHA_LR_DECAY; }
-    
-    // Configuration is now accessed via LunaConfiguration static members
-    // Removed getConfig()/setConfig() methods - use LunaConfiguration directly
-    
-    // Set individual config options (update LunaConfiguration directly)
-    void setIteration(unsigned iteration) { 
-        LunaConfiguration::ALPHA_ITERATIONS = iteration; 
-        _iteration = iteration; 
+
+    void setIteration(unsigned iteration) {
+        LunaConfiguration::ALPHA_ITERATIONS = iteration;
+        _iteration = iteration;
     }
-    void setLrAlpha(float lr) { 
-        LunaConfiguration::ALPHA_LR = lr; 
-        _learningRate = lr; 
+    void setLrAlpha(float lr) {
+        LunaConfiguration::ALPHA_LR = lr;
+        _learningRate = lr;
     }
     void setKeepBest(bool keep) { LunaConfiguration::KEEP_BEST = keep; }
     void setOptimizer(const std::string& opt) { LunaConfiguration::OPTIMIZER = String(opt.c_str()); }
     void setBoundSide(LunaConfiguration::BoundSide side) { LunaConfiguration::BOUND_SIDE = side; }
 
-    // Optimization side queries (read from LunaConfiguration)
     LunaConfiguration::BoundSide getBoundSide() const { return LunaConfiguration::BOUND_SIDE; }
     bool isOptimizingLower() const { return LunaConfiguration::BOUND_SIDE == LunaConfiguration::BoundSide::Lower; }
     bool isOptimizingUpper() const { return LunaConfiguration::BOUND_SIDE == LunaConfiguration::BoundSide::Upper; }
@@ -135,77 +121,53 @@ private:
     TorchModel* _torchModel;
     std::unique_ptr<CROWNAnalysis> _crownAnalysis;
 
-    // Alpha parameter storage (unified, matching auto-LiRPA)
     // nodeIndex -> startKey -> AlphaParameters
-    // Alpha shape: [2, spec, 1, numUnstable] where dim 0 separates lA/uA paths
+    // alpha shape: [2, spec, 1, numUnstable] where dim 0 separates lA/uA paths
     std::unordered_map<unsigned,
         std::unordered_map<std::string, AlphaParameters>> _alphaByNodeStart;
 
-
-    // Optimizable activation nodes
     std::vector<std::pair<unsigned, std::shared_ptr<BoundedAlphaOptimizeNode>>> _optimizableNodes;
-    
-    // Configuration is now accessed via LunaConfiguration static members
-    // Removed _config member variable
-    bool _alphaEnabled;         // Whether alpha optimization is enabled
-    bool _initialized;          // Whether alpha parameters have been initialized
-    bool _reuseIntermediateBounds{false}; // Reuse intermediate bounds from previous optimization
-    unsigned _iteration;        // Number of optimization iterations (default: 20)
-    float _learningRate;        // Learning rate for alpha optimization (default: 0.5)
-    std::string _optimizationStage;  // Current optimization stage
 
-    // Best alpha tracking for optimization (unified, matching auto-LiRPA)
+    bool _alphaEnabled;
+    bool _initialized;
+    bool _reuseIntermediateBounds{false};
+    unsigned _iteration;
+    float _learningRate;
+    std::string _optimizationStage;
+
     std::unordered_map<unsigned,
         std::unordered_map<std::string, AlphaParameters>> _bestAlphaByNodeStart;
-    
 
-
-    // Best bounds tracking for dual optimization
     torch::Tensor _bestLowerBounds;
     torch::Tensor _bestUpperBounds;
 
-    // Best intermediate bounds tracking (per-node concrete bounds)
-    // Maps nodeIndex -> (best_lower, best_upper) for each layer
+    // per-node best intermediate bounds: nodeIndex -> (best_lower, best_upper)
     std::unordered_map<unsigned, std::pair<torch::Tensor, torch::Tensor>> _bestIntermediateBounds;
 
-    // Reference bounds for the straight-through estimator (STE) stabilization.
-    // Captures the best-so-far intermediate bounds as detached constants.
-    // During optimization, computed intermediate bounds are clamped to be at least
-    // as tight as these references (value), while gradients flow through the
-    // unclamped computation (straight-through).
+    // STE stabilization: intermediate bounds are clamped to be at least as tight
+    // as these references (value), while gradients flow unclamped (straight-through)
     std::unordered_map<unsigned, std::pair<torch::Tensor, torch::Tensor>> _referenceBounds;
 
-    // Fixed intermediate bounds from the first CROWN-with-alpha pass (pre-loop).
-    // Analogous to auto_LiRPA's fix_interm_bounds: computed once, injected every iteration.
-    // Persists across computeOptimizedBounds() calls (lower/upper).
+    // auto_LiRPA fix_interm_bounds: computed once, injected every iteration
     std::unordered_map<unsigned, std::pair<torch::Tensor, torch::Tensor>> _initIntermediateBounds;
 
-
-    
-    // Initialization phase methods
-    
     void performForwardPass();
     void prepareOptimizableActivations();
     void performCROWNInitializationPass();
-    // Ensure alpha exists for (node, start) pair with correct shape and initialization
     AlphaParameters& ensureAlphaFor(
         unsigned nodeIndex,
         const std::string& startKey,
         int specDim, int outDim,
         const torch::Tensor& input_lb,
         const torch::Tensor& input_ub);
-    
-    // Update best alphas for improvements (for specific bound side)
+
     void updateBestAlphas(const std::vector<int>& improvedIndices);
 
-    // Reset alpha to best known values (for specific bound side)
     void restoreBestAlphas();
 
-    // Best intermediate bounds tracking (following auto-LiRPA)
     void snapshotBestIntermediateBounds();
     void restoreBestIntermediateBounds();
 
-    // Fixed intermediate bounds (auto_LiRPA fix_interm_bounds=True)
     void _captureInitIntermediateBounds();
     void _injectInitIntermediateBounds();
 
@@ -214,26 +176,17 @@ private:
                              bool optimizeLower,
                              c10::optional<torch::Tensor> stop_mask_opt = c10::nullopt);
 
-    /* DEPRECATED - Gradient step now in TorchModel
-    void performGradientStep(std::shared_ptr<torch::optim::Optimizer>& optimizer,
-                           const torch::Tensor& loss);
-    */
-  
     std::vector<int> findImprovedIndices(const torch::Tensor& currentBounds,
                                         const torch::Tensor& bestBounds,
                                         bool isLowerBound);
 
-    // Helper method
     bool shouldPerformOptimization() const;
-    
-    // Bound extraction methods (following auto_LiRPA approach)
+
     torch::Tensor extractLowerBoundsFromCROWN();
     torch::Tensor extractUpperBoundsFromCROWN();
-    
-    // Configuration synchronization
+
     void updateFromConfig();
 
-    // Utility 
     void log(const String& message);
 };
 

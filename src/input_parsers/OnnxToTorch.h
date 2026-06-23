@@ -1,3 +1,14 @@
+/*********************                                                        */
+/*! \file OnnxToTorch.h
+ ** \verbatim
+ ** This file is part of the Luna project.
+ ** Copyright (c) 2025-2026 by the authors listed in the file AUTHORS
+ ** in the top-level source directory) and their institutional affiliations.
+ ** All rights reserved. See the file COPYING in the top-level source
+ ** directory for licensing information.\endverbatim
+ **
+ **/
+
 #ifndef __OnnxToTorchParser_h__
 #define __OnnxToTorchParser_h__
 
@@ -17,7 +28,7 @@
 #include "../engine/nodes/BoundedSubNode.h"
 #include "../engine/nodes/BoundedBatchNormNode.h"
 
-// Undefine Warning macro to avoid conflict with PyTorch
+// avoid macro conflict with PyTorch
 #ifdef Warning
 #undef Warning
 #endif
@@ -25,14 +36,12 @@
 #include <torch/torch.h>
 #include <memory>
 
-// Forward declarations
 namespace NLR {
     class TorchModel;
 }
 
 using TensorShape = Vector<unsigned int>;
 
-// Error handling functions for OnnxToTorch parser
 void onnxToTorchMissingAttributeError(const onnx::NodeProto &node, const String &attributeName);
 void onnxToTorchUnimplementedOperationError(const onnx::NodeProto &node);
 void onnxToTorchUnimplementedAttributeError(const onnx::NodeProto &node, const String &attributeName);
@@ -99,9 +108,7 @@ namespace ConstantProcessor {
     torch::Tensor processConstantNode(const onnx::NodeProto& node);
 }
 
-// New namespace for bounded node conversion
 namespace BoundedOperationConverter {
-    // Helper functions for shape extraction
     TensorShape extractShapeFromNode(const onnx::NodeProto& node, 
                                    const Map<String, onnx::ValueInfoProto>& name_to_input,
                                    const Map<String, onnx::TensorProto>& name_to_initializer,

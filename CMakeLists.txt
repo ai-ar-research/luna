@@ -1,18 +1,17 @@
-cmake_minimum_required(VERSION 3.16)
-project(LUNA)
+cmake_minimum_required(VERSION 3.24)
+project(LUNA VERSION 1.0.0 LANGUAGES CXX)
 
-set(LUNA_VERSION 1.0.0)
-add_definitions("-DLUNA_VERSION=\"${LUNA_VERSION}\"")
-
-set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 ##################
 ## User options ##
 ##################
 
 option(BUILD_STATIC_LUNA "Build static LUNA binary" OFF)
-option(ENABLE_OPENBLAS "Do symbolic bound tightening using blas" ON)
 option(RUN_UNIT_TEST "Build and register unit tests" ON)
 option(RUN_REGRESS_TEST "Build and register regression tests" OFF)
 option(RUN_SYSTEM_TEST "Build and register system tests" OFF)
@@ -29,7 +28,6 @@ execute_process(
   OUTPUT_STRIP_TRAILING_WHITESPACE
   ERROR_QUIET
 )
-add_definitions("-DGIT_BRANCH=\"${GIT_BRANCH}\"")
 
 execute_process(
   COMMAND git log -1 --format=%h
@@ -38,104 +36,87 @@ execute_process(
   OUTPUT_STRIP_TRAILING_WHITESPACE
   ERROR_QUIET
 )
-add_definitions("-DGIT_COMMIT_HASH=\"${GIT_COMMIT_HASH}\"")
 
 #########################
 ## Basic configuration ##
 #########################
 
-set(TOOLS_DIR "${PROJECT_SOURCE_DIR}/tools")
 set(SRC_DIR "${PROJECT_SOURCE_DIR}/src")
 set(RESOURCES_DIR "${PROJECT_SOURCE_DIR}/resources")
 set(COMMON_DIR "${SRC_DIR}/common")
 set(ENGINE_DIR "${SRC_DIR}/engine")
 set(INPUT_PARSERS_DIR "${SRC_DIR}/input_parsers")
 
-if (MSVC)
-  set(SCRIPT_EXTENSION bat)
-else()
-  set(SCRIPT_EXTENSION sh)
-endif()
-
-###########
-## Boost ##
-###########
-
-add_definitions(-DBOOST_NO_CXX98_FUNCTION_BASE)
-set(BOOST_VERSION 1.84.0)
-set(BOOST_DIR "${TOOLS_DIR}/boost-${BOOST_VERSION}")
-
-if (MSVC)
-  set(BOOST_ROOT "${BOOST_DIR}/win_installed")
-  set(Boost_NAMESPACE libboost)
-elseif (${CMAKE_SIZEOF_VOID_P} EQUAL 4 AND NOT MSVC)
-  set(BOOST_ROOT "${BOOST_DIR}/installed32")
-else()
-  set(BOOST_ROOT "${BOOST_DIR}/installed")
-endif()
-
-set(Boost_USE_DEBUG_RUNTIME FALSE)
-find_package(Boost ${BOOST_VERSION} COMPONENTS program_options timer chrono thread regex)
-
-if (NOT ${Boost_FOUND})
-  execute_process(COMMAND ${TOOLS_DIR}/download_boost.${SCRIPT_EXTENSION} ${BOOST_VERSION})
-  find_package(Boost ${BOOST_VERSION} REQUIRED COMPONENTS program_options timer chrono thread regex)
-endif()
-
-set(LIBS_INCLUDES ${Boost_INCLUDE_DIRS})
-list(APPEND LIBS ${Boost_LIBRARIES})
+include(FetchContent)
+include(cmake/versions.cmake)
 
 ##############
 ## Protobuf ##
 ##############
 
-set(PROTOBUF_VERSION 3.19.2)
-set(PROTOBUF_DEFAULT_DIR "${TOOLS_DIR}/protobuf-${PROTOBUF_VERSION}")
+# Protobuf must be declared before libtorch to prevent target conflicts
+set(PROTOBUF_VERSION ${LUNA_PROTOBUF_VERSION})
 
-if (NOT PROTOBUF_DIR)
-    set(PROTOBUF_DIR ${PROTOBUF_DEFAULT_DIR})
-endif()
+set(protobuf_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(protobuf_BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+set(protobuf_WITH_ZLIB OFF CACHE BOOL "" FORCE)
+set(protobuf_MSVC_STATIC_RUNTIME OFF CACHE BOOL "" FORCE)
 
-if(NOT EXISTS "${PROTOBUF_DIR}/installed/lib/libprotobuf.a")
-    message("Can't find protobuf, installing...")
-    if (${PROTOBUF_DIR} STREQUAL ${PROTOBUF_DEFAULT_DIR})
-        execute_process(COMMAND ${TOOLS_DIR}/download_protobuf.sh ${PROTOBUF_VERSION})
-    else()
-        message(FATAL_ERROR "Can't find protobuf in the supplied directory")
-    endif()
-endif()
+# protobuf 3.19.x has cmake_minimum_required(VERSION 2.8.12)
+set(CMAKE_POLICY_VERSION_MINIMUM 3.5)
 
-set(PROTOBUF_LIB protobuf)
-add_library(${PROTOBUF_LIB} SHARED IMPORTED)
-set_property(TARGET ${PROTOBUF_LIB} PROPERTY POSITION_INDEPENDENT_CODE ON)
-set_target_properties(${PROTOBUF_LIB} PROPERTIES IMPORTED_LOCATION ${PROTOBUF_DIR}/installed/lib/libprotobuf.a)
-target_include_directories(${PROTOBUF_LIB} INTERFACE ${PROTOBUF_DIR}/installed/include)
-list(APPEND LIBS ${PROTOBUF_LIB})
+FetchContent_Declare(protobuf
+    URL https://github.com/protocolbuffers/protobuf/releases/download/v${PROTOBUF_VERSION}/protobuf-cpp-${PROTOBUF_VERSION}.tar.gz
+    DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+    SOURCE_SUBDIR cmake
+    EXCLUDE_FROM_ALL
+)
+FetchContent_MakeAvailable(protobuf)
+
+unset(CMAKE_POLICY_VERSION_MINIMUM)
+
+list(APPEND LIBS libprotobuf)
 
 ##########
 ## ONNX ##
 ##########
 
-set(ONNX_VERSION 1.15.0)
-set(ONNX_DIR "${TOOLS_DIR}/onnx-${ONNX_VERSION}")
+set(ONNX_VERSION ${LUNA_ONNX_VERSION})
+set(ONNX_PROTO_DIR "${CMAKE_BINARY_DIR}/onnx-${ONNX_VERSION}")
+file(MAKE_DIRECTORY ${ONNX_PROTO_DIR})
 
-if(NOT EXISTS "${ONNX_DIR}/onnx.proto3.pb.h")
-    message("Generating ONNX protobuf file...")
-    execute_process(COMMAND ${TOOLS_DIR}/download_onnx.sh ${ONNX_VERSION} ${PROTOBUF_VERSION})
+if(NOT EXISTS "${ONNX_PROTO_DIR}/onnx.proto3")
+    message(STATUS "Downloading ONNX proto file v${ONNX_VERSION}...")
+    file(DOWNLOAD
+        "https://raw.githubusercontent.com/onnx/onnx/v${ONNX_VERSION}/onnx/onnx.proto3"
+        "${ONNX_PROTO_DIR}/onnx.proto3"
+        STATUS ONNX_DOWNLOAD_STATUS
+    )
+    list(GET ONNX_DOWNLOAD_STATUS 0 ONNX_DOWNLOAD_RESULT)
+    if(NOT ONNX_DOWNLOAD_RESULT EQUAL 0)
+        message(FATAL_ERROR "Failed to download ONNX proto file")
+    endif()
 endif()
 
-file(GLOB DEPS_ONNX "${ONNX_DIR}/*.cc")
-# Bundled protobuf must come before system includes (e.g. Homebrew) to avoid header version mismatch
-include_directories(BEFORE SYSTEM ${PROTOBUF_DIR}/installed/include)
-include_directories(SYSTEM ${ONNX_DIR})
+add_custom_command(
+    OUTPUT "${ONNX_PROTO_DIR}/onnx.proto3.pb.cc" "${ONNX_PROTO_DIR}/onnx.proto3.pb.h"
+    COMMAND protoc --cpp_out=${ONNX_PROTO_DIR} -I${ONNX_PROTO_DIR} onnx.proto3
+    WORKING_DIRECTORY ${ONNX_PROTO_DIR}
+    DEPENDS "${ONNX_PROTO_DIR}/onnx.proto3" protoc
+    COMMENT "Compiling ONNX protobuf"
+)
+
+set(DEPS_ONNX "${ONNX_PROTO_DIR}/onnx.proto3.pb.cc")
 
 #############
 ## PyTorch ##
 #############
 
-set(PYTORCH_VERSION 2.2.1)
+set(PYTORCH_VERSION ${LUNA_PYTORCH_VERSION})
+option(LUNA_GPU "Enable CUDA libtorch" OFF)
+option(LUNA_AUTO_DOWNLOAD "Download dependencies via FetchContent when missing" OFF)
 
-# First, try to find PyTorch from the active Python environment (handles CUDA correctly)
+# Try to find PyTorch from the active Python environment first
 execute_process(
     COMMAND python3 -c "import torch; print(torch.utils.cmake_prefix_path)"
     OUTPUT_VARIABLE TORCH_PYTHON_PREFIX
@@ -147,13 +128,37 @@ execute_process(
 if(TORCH_PYTHON_RESULT EQUAL 0 AND TORCH_PYTHON_PREFIX)
     message(STATUS "Found PyTorch from Python environment: ${TORCH_PYTHON_PREFIX}")
     list(APPEND CMAKE_PREFIX_PATH ${TORCH_PYTHON_PREFIX})
-else()
-    # Fallback to local libtorch
-    set(PYTORCH_DIR "${TOOLS_DIR}/libtorch-${PYTORCH_VERSION}")
-    list(APPEND CMAKE_PREFIX_PATH ${PYTORCH_DIR})
-    if(NOT EXISTS "${PYTORCH_DIR}")
-        execute_process(COMMAND ${TOOLS_DIR}/download_libtorch.sh ${PYTORCH_VERSION})
+elseif(LUNA_AUTO_DOWNLOAD)
+    # FetchContent fallback: download pre-built libtorch
+    if(APPLE AND CMAKE_SYSTEM_PROCESSOR STREQUAL "arm64")
+        set(LIBTORCH_URL "https://download.pytorch.org/libtorch/cpu/libtorch-macos-arm64-${PYTORCH_VERSION}.zip")
+    elseif(APPLE)
+        set(LIBTORCH_URL "https://download.pytorch.org/libtorch/cpu/libtorch-macos-x86_64-${PYTORCH_VERSION}.zip")
+    elseif(LUNA_GPU)
+        set(LIBTORCH_URL "https://download.pytorch.org/libtorch/cu121/libtorch-cxx11-abi-shared-with-deps-${PYTORCH_VERSION}%2Bcu121.zip")
+    else()
+        set(LIBTORCH_URL "https://download.pytorch.org/libtorch/cpu/libtorch-cxx11-abi-shared-with-deps-${PYTORCH_VERSION}%2Bcpu.zip")
     endif()
+
+    message(STATUS "Downloading libtorch from ${LIBTORCH_URL}")
+    FetchContent_Declare(libtorch
+        URL ${LIBTORCH_URL}
+        DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+    )
+    FetchContent_MakeAvailable(libtorch)
+    list(APPEND CMAKE_PREFIX_PATH ${libtorch_SOURCE_DIR})
+else()
+    message(FATAL_ERROR
+        "PyTorch not found in Python environment and LUNA_AUTO_DOWNLOAD is OFF.\n"
+        "Either install PyTorch in your Python environment:\n"
+        "  pip install torch\n"
+        "Or re-run with -DLUNA_AUTO_DOWNLOAD=ON to download libtorch automatically."
+    )
+endif()
+
+# Re-prepend conda prefix after libtorch discovery to prefer full shared libraries
+if(DEFINED ENV{CONDA_PREFIX})
+    list(PREPEND CMAKE_PREFIX_PATH $ENV{CONDA_PREFIX})
 endif()
 
 find_package(Torch REQUIRED)
@@ -167,48 +172,15 @@ list(APPEND LIBS ${TORCH_LIBRARIES})
 option(BUILD_PYTHON_BINDINGS "Build Python bindings using pybind11" ON)
 
 if(BUILD_PYTHON_BINDINGS)
-  set(PYBIND11_VERSION 2.11.1)
-  set(PYBIND11_DIR "${TOOLS_DIR}/pybind11-${PYBIND11_VERSION}")
-  
-  if(NOT EXISTS "${PYBIND11_DIR}/include/pybind11/pybind11.h")
-    message("Can't find pybind11, downloading...")
-    execute_process(COMMAND ${TOOLS_DIR}/download_pybind11.sh ${PYBIND11_VERSION})
-  endif()
-  
-  # Add pybind11 subdirectory
-  add_subdirectory(${PYBIND11_DIR} ${CMAKE_BINARY_DIR}/pybind11)
+  set(PYBIND11_VERSION ${LUNA_PYBIND11_VERSION})
+
+  FetchContent_Declare(pybind11
+      GIT_REPOSITORY https://github.com/pybind/pybind11.git
+      GIT_TAG v${PYBIND11_VERSION}
+      GIT_SHALLOW TRUE
+  )
+  FetchContent_MakeAvailable(pybind11)
   message(STATUS "Building Python bindings with pybind11")
-endif()
-
-##############
-## OpenBLAS ##
-##############
-
-if (NOT MSVC AND ${ENABLE_OPENBLAS})
-  set(OPENBLAS_VERSION 0.3.19)
-  set(OPENBLAS_LIB openblas)
-  set(OPENBLAS_DEFAULT_DIR "${TOOLS_DIR}/OpenBLAS-${OPENBLAS_VERSION}")
-
-  if (NOT OPENBLAS_DIR)
-      set(OPENBLAS_DIR ${OPENBLAS_DEFAULT_DIR})
-  endif()
-
-  message(STATUS "Using OpenBLAS for matrix multiplication")
-  add_compile_definitions(ENABLE_OPENBLAS)
-
-  if(NOT EXISTS "${OPENBLAS_DIR}/installed/lib/libopenblas.a")
-    message("Can't find OpenBLAS, installing...")
-    if (${OPENBLAS_DIR} STREQUAL ${OPENBLAS_DEFAULT_DIR})
-      execute_process(COMMAND ${TOOLS_DIR}/download_openBLAS.sh ${OPENBLAS_VERSION})
-    else()
-      message(FATAL_ERROR "Can't find OpenBLAS in the supplied directory")
-    endif()
-  endif()
-
-  add_library(${OPENBLAS_LIB} SHARED IMPORTED)
-  set_target_properties(${OPENBLAS_LIB} PROPERTIES IMPORTED_LOCATION ${OPENBLAS_DIR}/installed/lib/libopenblas.a)
-  list(APPEND LIBS ${OPENBLAS_LIB})
-  target_include_directories(${OPENBLAS_LIB} INTERFACE ${OPENBLAS_DIR}/installed/include)
 endif()
 
 ###########
@@ -230,23 +202,26 @@ if (NOT MSVC)
     set(RELEASE_FLAGS ${COMPILE_FLAGS} -O3)
 endif()
 
-add_definitions(-DRESOURCES_DIR="${RESOURCES_DIR}")
-
 # pthread
 set(THREADS_PREFER_PTHREAD_FLAG ON)
 find_package(Threads REQUIRED)
 list(APPEND LIBS Threads::Threads)
 
 # Create core library with ONNX dependencies
-# Subdirectories will add their sources via target_sources()
 add_library(${LUNA_LIB} ${DEPS_ONNX})
 
-set_target_properties(${LUNA_LIB} PROPERTIES POSITION_INDEPENDENT_CODE ON)
+target_compile_definitions(${LUNA_LIB} PUBLIC
+    LUNA_VERSION="${PROJECT_VERSION}"
+    GIT_BRANCH="${GIT_BRANCH}"
+    GIT_COMMIT_HASH="${GIT_COMMIT_HASH}"
+    RESOURCES_DIR="${RESOURCES_DIR}"
+)
 
-# Set base include directories
 target_include_directories(${LUNA_LIB} PUBLIC
     ${SRC_DIR}
-    ${LIBS_INCLUDES}
+)
+target_include_directories(${LUNA_LIB} SYSTEM PUBLIC
+    ${ONNX_PROTO_DIR}
 )
 
 # Link libraries
@@ -269,7 +244,6 @@ add_executable(luna src/main.cpp src/engine/LunaMain.cpp)
 target_link_libraries(luna ${LUNA_LIB} ${LIBS})
 target_include_directories(luna PRIVATE
     ${SRC_DIR}
-    ${LIBS_INCLUDES}
 )
 target_compile_options(luna PRIVATE ${RELEASE_FLAGS})
 
@@ -313,21 +287,21 @@ else()
 endif()
 
 if(BUILD_BENCHMARKS)
-    include(FetchContent)
     FetchContent_Declare(googlebenchmark
         GIT_REPOSITORY https://github.com/google/benchmark.git
-        GIT_TAG v1.8.3)
+        GIT_TAG v${LUNA_BENCHMARK_VERSION})
     set(BENCHMARK_ENABLE_TESTING OFF CACHE BOOL "" FORCE)
     FetchContent_MakeAvailable(googlebenchmark)
 endif()
 
 if(BUILD_TESTS)
-    list(APPEND CMAKE_MODULE_PATH "${PROJECT_SOURCE_DIR}/cmake")
-    list(APPEND CMAKE_PREFIX_PATH "${TOOLS_DIR}/cxxtest")
-    find_package(CxxTest)
-    if(NOT CXXTEST_FOUND)
-        message(FATAL_ERROR "CxxTest not found. Expected at ${TOOLS_DIR}/cxxtest")
-    endif()
+    FetchContent_Declare(googletest
+        GIT_REPOSITORY https://github.com/google/googletest.git
+        GIT_TAG v${LUNA_GTEST_VERSION}
+        GIT_SHALLOW TRUE
+    )
+    set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
+    FetchContent_MakeAvailable(googletest)
     enable_testing()
     add_subdirectory(tests)
 endif()
@@ -341,10 +315,10 @@ if(BUILD_PYTHON_BINDINGS)
 endif()
 
 message(STATUS "LUNA configured successfully")
-message(STATUS "  - LUNA Version: ${LUNA_VERSION}")
+message(STATUS "  - LUNA Version: ${PROJECT_VERSION}")
 message(STATUS "  - Build type: ${CMAKE_BUILD_TYPE}")
+message(STATUS "  - GPU mode: ${LUNA_GPU}")
 message(STATUS "  - PyTorch version: ${PYTORCH_VERSION}")
-message(STATUS "  - Boost version: ${BOOST_VERSION}")
 message(STATUS "  - Build tests: ${BUILD_TESTS}")
 message(STATUS "  - Build benchmarks: ${BUILD_BENCHMARKS}")
 message(STATUS "  - Build Python bindings: ${BUILD_PYTHON_BINDINGS}")

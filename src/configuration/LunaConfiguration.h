@@ -1,3 +1,14 @@
+/*********************                                                        */
+/*! \file LunaConfiguration.h
+ ** \verbatim
+ ** This file is part of the Luna project.
+ ** Copyright (c) 2025-2026 by the authors listed in the file AUTHORS
+ ** in the top-level source directory) and their institutional affiliations.
+ ** All rights reserved. See the file COPYING in the top-level source
+ ** directory for licensing information.\endverbatim
+ **
+ **/
+
 #ifndef __LunaConfiguration_h__
 #define __LunaConfiguration_h__
 
@@ -8,7 +19,6 @@
 class LunaConfiguration
 {
 public:
-    // Enums
     enum class AnalysisMethod {
         CROWN,
         AlphaCROWN
@@ -19,18 +29,15 @@ public:
         Upper
     };
 
-    // Static methods
     static void print();
     static void resetToDefaults();
     static void parseArgs(int argc, char** argv);
 
-    // Analysis settings
     static AnalysisMethod ANALYSIS_METHOD;
     static bool COMPUTE_LOWER;
     static bool COMPUTE_UPPER;
     static bool VERBOSE;
 
-    // Alpha-CROWN settings
     static unsigned ALPHA_ITERATIONS;
     static float ALPHA_LR;
     static float ALPHA_LR_DECAY;
@@ -39,6 +46,7 @@ public:
     static unsigned EARLY_STOP_PATIENCE;
     static bool FIX_INTERM_BOUNDS;
     static bool STABILIZE_INTERMEDIATE_BOUNDS;
+    static bool RECOMPUTE_INTERMEDIATE_BOUNDS;
     static String OPTIMIZER;
     static float START_SAVE_BEST;
     static BoundSide BOUND_SIDE;
@@ -47,12 +55,10 @@ public:
     static bool STOP_CROWN_ON_VERIFIED;
     static bool STOP_ALPHA_ON_VERIFIED;
 
-    // CROWN settings
     static bool ENABLE_FIRST_LINEAR_IBP;
     static bool USE_STANDARD_CROWN;
     static bool USE_PATCHES_MODE;
 
-    // Runtime options
     static int VERBOSITY;
     static int TIMEOUT;
     static int SEED;
@@ -60,7 +66,6 @@ public:
     static String INPUT_FILE_PATH;
     static String PROPERTY_FILE_PATH;
 
-    // Device options
     static bool USE_CUDA;
     static int CUDA_DEVICE_ID;
     static torch::Device DEVICE;
@@ -68,13 +73,11 @@ public:
     static torch::Device getDevice();
     static void updateDeviceFromFlags();
 
-    // Utility constants (replacing GlobalConfiguration constants)
     static const double DEFAULT_EPSILON_FOR_COMPARISONS;
     static const unsigned DEFAULT_DOUBLE_TO_STRING_PRECISION;
     static bool NETWORK_LEVEL_REASONER_LOGGING;
     static const double SIGMOID_CUTOFF_CONSTANT;
 
-    // Helper methods for string conversion
     static String analysisMethodToString(AnalysisMethod method);
     static AnalysisMethod stringToAnalysisMethod(const String& str);
     static String boundSideToString(BoundSide side);

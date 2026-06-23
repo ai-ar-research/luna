@@ -1,5 +1,5 @@
 /*********************                                                        */
-/*! \file ConvolutionMode.h
+/*! \file AlphaParameters.h
  ** \verbatim
  ** This file is part of the Luna project.
  ** Copyright (c) 2025-2026 by the authors listed in the file AUTHORS
@@ -9,17 +9,25 @@
  **
  **/
 
-#ifndef __CONVOLUTION_MODE_H__
-#define __CONVOLUTION_MODE_H__
+#ifndef __AlphaParameters_h__
+#define __AlphaParameters_h__
+
+#include <torch/torch.h>
 
 namespace NLR {
 
-// Mirrors auto_LiRPA's conv_mode
-enum class ConvMode {
-    MATRIX,
-    PATCHES
+struct AlphaParameters {
+    torch::Tensor alpha;
+    torch::Tensor unstableMask;
+    torch::Tensor unstableIndices;
+    int specDim{0};
+    int batchDim{1};
+    int outDim{0};
+    int numUnstable{0};
+    bool requiresGrad{true};
+    bool hasSpecDefaultSlot{false};
 };
 
 } // namespace NLR
 
-#endif // __CONVOLUTION_MODE_H__
+#endif // __AlphaParameters_h__

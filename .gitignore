@@ -26,33 +26,8 @@ CTestTestfile.cmake
 _deps/
 
 # ============================================================================
-# Downloaded Dependencies (auto-downloaded by CMake)
-# These are large files that should not be committed
+# Downloaded Dependencies (FetchContent managed, cached in build/_deps)
 # ============================================================================
-
-# Boost (large library, ~200MB)
-/tools/boost-*/
-/tools/boost_*.tar.gz
-
-# PyTorch/LibTorch (very large, ~2GB)
-/tools/libtorch-*/
-/tools/libtorch*.zip
-
-# Protobuf
-/tools/protobuf-*/
-/tools/protobuf*.tar.gz
-
-# ONNX
-/tools/onnx-*/
-/tools/onnx*.tar.gz
-
-# OpenBLAS
-/tools/OpenBLAS-*/
-/tools/OpenBLAS*.tar.gz
-
-# Pybind11 (if used in future)
-/tools/pybind11-*/
-/tools/pybind11*.tar.gz
 
 # ============================================================================
 # IDE and Editor files
@@ -197,9 +172,9 @@ vcpkg_installed/
 # Keep these files
 # ============================================================================
 
-# Force include download scripts (small text files)
-!/tools/download_*.sh
-!/tools/download_*.bat
+# Force include root build wrappers
+!/Makefile
+!/configure.sh
 
 # Force include CMakeLists and source files
 !CMakeLists.txt
@@ -212,10 +187,6 @@ vcpkg_installed/
 !*.md
 !LICENSE
 !AUTHORS
-
-# Downloaded dependency archives (large files)
-tools/*.tar.gz
-tools/*.zip
 
 # ============================================================================
 # Other
@@ -253,3 +224,5 @@ tllverifybench_problematic_subset.md
 tllverifybench_problematic_subset.csv
 
 alpha-beta-CROWN/
+
+CLAUDE.md

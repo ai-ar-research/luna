@@ -1,3 +1,14 @@
+/*********************                                                        */
+/*! \file BoundedBatchNormNode.h
+ ** \verbatim
+ ** This file is part of the Luna project.
+ ** Copyright (c) 2025-2026 by the authors listed in the file AUTHORS
+ ** in the top-level source directory) and their institutional affiliations.
+ ** All rights reserved. See the file COPYING in the top-level source
+ ** directory for licensing information.\endverbatim
+ **
+ **/
+
 #ifndef __BOUNDED_BATCHNORM_NODE_H__
 #define __BOUNDED_BATCHNORM_NODE_H__
 
@@ -6,8 +17,7 @@
 
 namespace NLR {
 
-// BatchNormalization: y = scale * (x - mean) / sqrt(var + eps) + B
-// This is an elementwise affine transform per channel (channel dim = 1).
+// y = scale * (x - mean) / sqrt(var + eps) + B
 class BoundedBatchNormNode : public BoundedTorchNode {
 public:
     BoundedBatchNormNode(
@@ -19,15 +29,12 @@ public:
         const String& name = ""
     );
 
-    // Node identification
     NLR::NodeType getNodeType() const override { return NLR::NodeType::BATCHNORM; }
     String getNodeName() const override { return _nodeName; }
     unsigned getNodeIndex() const override { return _nodeIndex; }
 
-    // Forward pass
     torch::Tensor forward(const torch::Tensor& input) override;
 
-    // Backward bound propagation
     void boundBackward(
         const BoundA& last_lA,
         const BoundA& last_uA,
@@ -37,32 +44,26 @@ public:
         torch::Tensor& ubias
     ) override;
 
-    // IBP
     BoundedTensor<torch::Tensor> computeIntervalBoundPropagation(
         const Vector<BoundedTensor<torch::Tensor>>& inputBounds) override;
 
-    // Node information
     unsigned getInputSize() const override { return _input_size; }
     unsigned getOutputSize() const override { return _output_size; }
     bool isPerturbed() const override { return true; }
 
-    // Size setters for initialization
     void setInputSize(unsigned size) override { _input_size = size; }
     void setOutputSize(unsigned size) override { _output_size = size; }
 
-    // Node state
     void setNodeIndex(unsigned index) override { _nodeIndex = index; }
     void setNodeName(const String& name) override { _nodeName = name; }
     void moveToDevice(const torch::Device& device) override;
 
-    // Testing/diagnostics helpers
     torch::Tensor getScale() const { return _scale; }
     torch::Tensor getBias() const { return _bias; }
     torch::Tensor getMean() const { return _mean; }
     torch::Tensor getVar() const { return _var; }
     float getEps() const { return _eps; }
 
-    // Cached 4D input shape from IBP / forward (e.g. [1, C, H, W])
     const std::vector<int64_t>& getLastInputShape() const { return _last_input_shape; }
 
     torch::Tensor getTmpWeight(const torch::Tensor& like) const { return tmp_weight(like); }
@@ -75,12 +76,11 @@ private:
     torch::Tensor _var;
     float _eps;
 
-    // Cached shapes (from forward or IBP input bounds) to support reshape for flattened A tensors.
     std::vector<int64_t> _last_input_shape;
 
-    // Cached derived parameters on target device (avoids repeated .to(device) + sqrt per call)
-    mutable torch::Tensor _cached_tmp_weight;  // scale / sqrt(var + eps)
-    mutable torch::Tensor _cached_tmp_bias;    // bias - mean * tmp_weight
+    // Avoids repeated .to(device) + sqrt per call
+    mutable torch::Tensor _cached_tmp_weight;
+    mutable torch::Tensor _cached_tmp_bias;
     mutable torch::Device _cached_device{torch::kCPU};
 
     void ensureCachedParams(const torch::Device& device) const;
@@ -90,14 +90,12 @@ private:
 
     torch::Tensor broadcast_channel_param(const torch::Tensor& param, const torch::Tensor& x) const;
 
-    // Tensor-mode helper
     BoundA boundOneSideTensor(
         const BoundA& last_A,
         const Vector<BoundedTensor<torch::Tensor>>& inputBounds,
         torch::Tensor& sum_bias
     );
 
-    // Patches-mode helper
     BoundA boundOneSidePatches(
         const BoundA& last_A,
         const Vector<BoundedTensor<torch::Tensor>>& inputBounds,
@@ -108,5 +106,3 @@ private:
 } // namespace NLR
 
 #endif // __BOUNDED_BATCHNORM_NODE_H__
-
-

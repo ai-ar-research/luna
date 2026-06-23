@@ -1,3 +1,14 @@
+/*********************                                                        */
+/*! \file BoundResult.h
+ ** \verbatim
+ ** This file is part of the Luna project.
+ ** Copyright (c) 2025-2026 by the authors listed in the file AUTHORS
+ ** in the top-level source directory) and their institutional affiliations.
+ ** All rights reserved. See the file COPYING in the top-level source
+ ** directory for licensing information.\endverbatim
+ **
+ **/
+
 #ifndef __BOUND_RESULT_H__
 #define __BOUND_RESULT_H__
 
@@ -10,7 +21,6 @@ namespace NLR {
 
 class BoundA {
 public:
-    // Can hold either a Tensor or a Patches object
     std::variant<torch::Tensor, std::shared_ptr<Patches>> data;
 
     BoundA() : data(torch::Tensor()) {}
@@ -29,7 +39,7 @@ public:
         if (isTensor()) return std::get<torch::Tensor>(data);
         return torch::Tensor();
     }
-    
+
     std::shared_ptr<Patches> asPatches() const {
         if (isPatches()) return std::get<std::shared_ptr<Patches>>(data);
         return nullptr;
@@ -45,4 +55,3 @@ public:
 } // namespace NLR
 
 #endif // __BOUND_RESULT_H__
-

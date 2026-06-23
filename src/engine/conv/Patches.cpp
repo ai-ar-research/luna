@@ -1,3 +1,14 @@
+/*********************                                                        */
+/*! \file Patches.cpp
+ ** \verbatim
+ ** This file is part of the Luna project.
+ ** Copyright (c) 2025-2026 by the authors listed in the file AUTHORS
+ ** in the top-level source directory) and their institutional affiliations.
+ ** All rights reserved. See the file COPYING in the top-level source
+ ** directory for licensing information.\endverbatim
+ **
+ **/
+
 #include "Patches.h"
 #include <torch/nn/functional.h>
 #include <stdexcept>
@@ -6,44 +17,43 @@
 namespace NLR {
 
 void Patches::simplify() {
-    // Merge stride and inserted_zeros; if they are the same they can cancel out.
     std::vector<int64_t> full_stride = stride;
     if (full_stride.size() == 1) {
         full_stride = {full_stride[0], full_stride[0]};
     }
-    
-    if (inserted_zeros > 0 && (inserted_zeros + 1) == full_stride[0] && 
-        full_stride[0] == full_stride[1] && 
-        (patches.size(-1) % full_stride[1] == 0) && 
+
+    if (inserted_zeros > 0 && (inserted_zeros + 1) == full_stride[0] &&
+        full_stride[0] == full_stride[1] &&
+        (patches.size(-1) % full_stride[1] == 0) &&
         (patches.size(-2) % full_stride[0] == 0)) {
-        
+
         std::vector<int64_t> full_stride_4 = {full_stride[1], full_stride[1], full_stride[0], full_stride[0]};
-        
+
         std::vector<int64_t> padding_vec = unify_shape(padding);
-        
+
         std::vector<int64_t> consumed_padding = {
             padding_vec[0],
             padding_vec[1] - (full_stride[1] - 1),
             padding_vec[2],
             padding_vec[3] - (full_stride[0] - 1)
         };
-        
+
         std::vector<int64_t> output_padding_vec = unify_shape(output_padding);
         std::vector<int64_t> tentative_padding;
         bool all_non_negative = true;
-        
+
         for (size_t i = 0; i < 4; ++i) {
             int64_t val = consumed_padding[i] / full_stride_4[i] - output_padding_vec[i];
             if (val < 0) all_non_negative = false;
             tentative_padding.push_back(val);
         }
-        
+
         if (all_non_negative) {
             std::pair<int64_t, int64_t> remove_zero_start_idx = {
-                padding_vec[2] % full_stride[0], 
+                padding_vec[2] % full_stride[0],
                 padding_vec[0] % full_stride[1]
             };
-            
+
             padding = tentative_padding;
             patches = remove_zeros(patches, inserted_zeros, remove_zero_start_idx);
             stride = {1, 1};
@@ -69,34 +79,28 @@ std::shared_ptr<Patches> Patches::create_similar(
     auto zeros = new_inserted_zeros.has_value() ? new_inserted_zeros.value() : inserted_zeros;
     auto id = new_identity.has_value() ? new_identity.value() : identity;
     auto in_shape = new_input_shape.has_value() ? new_input_shape.value() : input_shape;
-    
+
     return std::make_shared<Patches>(p, s, pad, out_pad, zeros, unstable_idx, output_shape, in_shape, id);
 }
 
 std::shared_ptr<Patches> Patches::add(const std::shared_ptr<Patches>& other) const {
-    // Assert stride equality (and size)
-    // Assuming stride is vector<int64_t>
     if (stride != other->stride) {
         throw std::runtime_error("Patches addition requires same stride");
     }
-    
-    // Unstable idx check simplified
-    
+
     torch::Tensor A1 = patches;
     torch::Tensor A2 = other->patches;
-    
-    // Padding merge
+
     std::vector<int64_t> sp = unify_shape(padding);
     std::vector<int64_t> op = unify_shape(other->padding);
-    
-    // Compute diff
+
     std::vector<int64_t> diff(4);
     int64_t diff_sum = 0;
     bool sp_ge_op = true;
     bool sp_le_op = true;
-    
+
     std::vector<int64_t> new_pad(4);
-    
+
     for(int i=0; i<4; ++i) {
         diff[i] = sp[i] - op[i];
         diff_sum += std::abs(diff[i]);
@@ -104,17 +108,11 @@ std::shared_ptr<Patches> Patches::add(const std::shared_ptr<Patches>& other) con
         if (diff[i] > 0) sp_le_op = false;
         new_pad[i] = std::max(sp[i], op[i]);
     }
-    
+
     if (diff_sum > 0) {
         if (sp_ge_op) {
-            // A2 needs padding
-            // F::pad needs (left, right, top, bottom) for 2D
-            // diff is (left, right, top, bottom)
-            // F::pad takes (d[0], d[1], d[2], d[3])
             A2 = torch::nn::functional::pad(A2, torch::nn::functional::PadFuncOptions(diff));
         } else if (sp_le_op) {
-            // A1 needs padding
-            // diff is negative, so op - sp = -diff
             std::vector<int64_t> neg_diff(4);
             for(int i=0; i<4; ++i) neg_diff[i] = -diff[i];
             A1 = torch::nn::functional::pad(A1, torch::nn::functional::PadFuncOptions(neg_diff));
@@ -122,9 +120,9 @@ std::shared_ptr<Patches> Patches::add(const std::shared_ptr<Patches>& other) con
             throw std::runtime_error("Unsupported padding size difference in Patches::add");
         }
     }
-    
+
     torch::Tensor ret = A1 + A2;
-    
+
     return std::make_shared<Patches>(
         ret, stride, new_pad, output_padding, inserted_zeros, unstable_idx, output_shape, input_shape, 0
     );
@@ -139,9 +137,7 @@ torch::Tensor Patches::to_matrix(const std::vector<int64_t>& in_shape) const {
 
 torch::Tensor Patches::matmul(const torch::Tensor& input, bool patch_abs,
                                const std::vector<int64_t>& expand_shape) const {
-    // Efficient bound computation without materializing full dense matrix.
-    // Mirrors auto_LiRPA Patches.matmul (patches.py:285-320).
-    // Uses inplace_unfold (zero-copy strided view) + einsum.
+    // Mirrors auto_LiRPA Patches.matmul -- uses inplace_unfold + einsum
 
     torch::Tensor p = patches;
     if (patch_abs) {
@@ -153,66 +149,51 @@ torch::Tensor Patches::matmul(const torch::Tensor& input, bool patch_abs,
         inp = inp.expand(torch::IntArrayRef(expand_shape));
     }
 
-    // Extract kernel size from patches tensor
     std::vector<int64_t> kernel_size = {p.size(-2), p.size(-1)};
 
-    // Unfold input: returns (batch, out_h, out_w, C, kh, kw)
     torch::Tensor unfold_input = inplace_unfold(
         inp, kernel_size, stride, padding, inserted_zeros, output_padding);
 
     if (unstable_idx.has_value()) {
-        // Sparse case
-        // p shape: (unstable_size, batch, C, kh, kw)
-        // unfold_input shape: (batch, out_h, out_w, C, kh, kw)
-
         int64_t out_c = output_shape[1];
-        // Expand to (out_c, batch, out_h, out_w, C, kh, kw)
         torch::Tensor uf = unfold_input.unsqueeze(0).expand(
             {out_c, -1, -1, -1, -1, -1, -1});
 
         const auto& idx = unstable_idx.value();
-        // Select unstable positions: idx[0]=channel, idx[1]=h, idx[2]=w
-        // Result: (unstable_size, batch, C, kh, kw)
         using namespace torch::indexing;
         uf = uf.index({idx[0], Slice(), idx[1], idx[2]});
 
-        // einsum: sbchw,sbchw->bs
         return torch::einsum("sbchw,sbchw->bs", {uf, p});
     } else {
-        // Non-sparse case
-        // p shape: (out_c, batch, out_h, out_w, C, kh, kw) [7D]
-        // unfold_input shape: (batch, out_h, out_w, C, kh, kw) [6D]
-
-        // einsum: bijchw,sbijchw->bsij
         return torch::einsum("bijchw,sbijchw->bsij", {unfold_input, p});
     }
 }
 
 torch::Tensor insert_zeros(const torch::Tensor& image, int64_t s) {
     if (s <= 0) return image;
-    
+
     int64_t N = image.size(0);
     int64_t C = image.size(1);
     int64_t H = image.size(2);
     int64_t W = image.size(3);
-    
+
     int64_t new_H = H * (s + 1) - s;
     int64_t new_W = W * (s + 1) - s;
-    
+
     torch::Tensor matrix = torch::zeros({N, C, new_H, new_W}, image.options());
-    
+
     using namespace torch::indexing;
     matrix.index_put_({Slice(), Slice(), Slice(None, None, s+1), Slice(None, None, s+1)}, image);
-    
+
     return matrix;
 }
 
 torch::Tensor remove_zeros(const torch::Tensor& image, int64_t s, const std::pair<int64_t, int64_t>& start_idx) {
     if (s <= 0) return image;
-    
+
     int64_t start_h = start_idx.first;
     int64_t start_w = start_idx.second;
-    
+
     using namespace torch::indexing;
     return image.index({Slice(), Slice(), Slice(start_h, None, s+1), Slice(start_w, None, s+1)});
 }
@@ -223,50 +204,50 @@ bool is_shape_used(const std::vector<int64_t>& shape, int expected) {
     return sum != expected;
 }
 
-torch::Tensor inplace_unfold(const torch::Tensor& image, const std::vector<int64_t>& kernel_size, 
-                            const std::vector<int64_t>& stride, const std::vector<int64_t>& padding, 
+torch::Tensor inplace_unfold(const torch::Tensor& image, const std::vector<int64_t>& kernel_size,
+                            const std::vector<int64_t>& stride, const std::vector<int64_t>& padding,
                             int64_t inserted_zeros, const std::vector<int64_t>& output_padding) {
-    
+
     torch::Tensor img = image;
     std::vector<int64_t> k_size = kernel_size;
     if (k_size.size() == 1) k_size = {k_size[0], k_size[0]};
-    
-    std::vector<int64_t> pad = unify_shape(padding); 
-    
+
+    std::vector<int64_t> pad = unify_shape(padding);
+
     std::vector<int64_t> out_pad = unify_shape(output_padding);
     std::vector<int64_t> str = stride;
     if (str.size() == 1) str = {str[0], str[0]};
-    
+
     if (inserted_zeros > 0) {
         img = insert_zeros(img, inserted_zeros);
     }
-    
+
     if (pad[0] != 0 || pad[1] != 0 || pad[2] != 0 || pad[3] != 0) {
         img = torch::nn::functional::pad(img, torch::nn::functional::PadFuncOptions(pad));
     }
-    
-    torch::Tensor unfolded = img.unfold(2, k_size[0], str[0]); 
-    unfolded = unfolded.unfold(3, k_size[1], str[1]); 
-    
+
+    torch::Tensor unfolded = img.unfold(2, k_size[0], str[0]);
+    unfolded = unfolded.unfold(3, k_size[1], str[1]);
+
     unfolded = unfolded.permute({0, 2, 3, 1, 4, 5});
-    
+
     if (is_shape_used(output_padding)) {
         using namespace torch::indexing;
-        
+
         int64_t dim_h_start = out_pad[2] > 0 ? out_pad[2] : 0;
         int64_t dim_h_end = out_pad[3] > 0 ? -out_pad[3] : std::numeric_limits<int64_t>::max();
-        
+
         int64_t dim_w_start = out_pad[0] > 0 ? out_pad[0] : 0;
         int64_t dim_w_end = out_pad[1] > 0 ? -out_pad[1] : std::numeric_limits<int64_t>::max();
-        
+
         auto get_slice = [](int64_t start, int64_t end) {
              if (end == std::numeric_limits<int64_t>::max()) return Slice(start, None);
              return Slice(start, end);
         };
-        
+
         unfolded = unfolded.index({Slice(), get_slice(dim_h_start, dim_h_end), get_slice(dim_w_start, dim_w_end), Slice(), Slice(), Slice()});
     }
-    
+
     return unfolded;
 }
 
@@ -279,38 +260,38 @@ void compute_patches_stride_padding(
 ) {
     std::vector<int64_t> p_pad = unify_shape(patches_padding);
     std::vector<int64_t> p_str = (patches_stride.size() == 1) ? std::vector<int64_t>{patches_stride[0], patches_stride[0]} : patches_stride;
-    
+
     auto expand_stride = [](const std::vector<int64_t>& s) {
         if (s.size() == 2) return std::vector<int64_t>{s[1], s[1], s[0], s[0]};
         if (s.size() == 1) return std::vector<int64_t>{s[0], s[0], s[0], s[0]};
         return s;
     };
-    
+
     std::vector<int64_t> full_p_stride = expand_stride(p_str);
-    
+
     std::vector<int64_t> o_pad = unify_shape(op_padding);
     std::vector<int64_t> o_str_in = (op_stride.size() == 1) ? std::vector<int64_t>{op_stride[0], op_stride[0]} : op_stride;
     std::vector<int64_t> full_o_stride = expand_stride(o_str_in);
-    
+
     new_padding.clear();
     new_stride.clear();
-    
+
     for (size_t i = 0; i < 4; ++i) {
         new_padding.push_back(p_pad[i] * full_o_stride[i] + o_pad[i] * (inserted_zeros + 1));
         new_stride.push_back(full_p_stride[i] * full_o_stride[i]);
     }
-    
+
     std::vector<int64_t> out_pad = unify_shape(output_padding);
     new_output_padding.resize(4);
-    
+
     int64_t H = input_shape[2];
     int64_t W = input_shape[3];
-    
+
     new_output_padding[0] = out_pad[0];
-    new_output_padding[1] = out_pad[1] + inserted_zeros * W % full_o_stride[1]; 
+    new_output_padding[1] = out_pad[1] + inserted_zeros * W % full_o_stride[1];
     new_output_padding[2] = out_pad[2];
-    new_output_padding[3] = out_pad[3] + inserted_zeros * H % full_o_stride[2]; 
-    
+    new_output_padding[3] = out_pad[3] + inserted_zeros * H % full_o_stride[2];
+
     if (new_stride[0] == new_stride[1] && new_stride[2] == new_stride[3] && new_stride[0] == new_stride[2]) {
          new_stride = {new_stride[2], new_stride[0]};
     } else {
@@ -333,17 +314,17 @@ torch::Tensor create_valid_mask(
 ) {
     std::vector<int64_t> shape_ones;
     for (size_t i = 1; i < output_shape.size(); ++i) shape_ones.push_back(1);
-    
+
     torch::Tensor one_d = torch::ones(shape_ones, torch::TensorOptions().device(device).dtype(dtype));
-    
+
     std::vector<int64_t> expand_shape;
     for (size_t i = 1; i < output_shape.size(); ++i) expand_shape.push_back(output_shape[i]);
     one_d = one_d.expand(expand_shape);
-    
-    one_d = one_d.unsqueeze(0); 
-    
+
+    one_d = one_d.unsqueeze(0);
+
     torch::Tensor one_d_unfolded = inplace_unfold(one_d, kernel_size, stride, padding, inserted_zeros, output_padding);
-    
+
     if (unstable_idx.has_value()) {
         torch::Tensor ans = one_d_unfolded.permute({1, 2, 0, 3, 4, 5});
         const auto& indices = unstable_idx.value();
@@ -366,17 +347,14 @@ torch::Tensor Patches::patches_to_matrix(
         const std::optional<std::vector<torch::Tensor>>& unstable_idx,
         int64_t inserted_zeros
 ) {
-    // Convert patches representation to dense matrix using efficient strided views
-    // This is a critical optimization - uses as_strided for zero-copy view creation
+    // as_strided for zero-copy view creation into sliding windows
 
     std::vector<int64_t> padding = unify_shape(padding_in);
     std::vector<int64_t> str = stride_in;
     if (str.size() == 1) str = {str[0], str[0]};
 
-    // Handle 9D pieces (squeeze extra dimensions)
     torch::Tensor p = pieces;
     if (p.dim() == 9) {
-        // Squeeze two additional dimensions for output and input respectively
         if (p.size(1) == 1 && p.size(5) == 1) {
             p = p.reshape({p.size(0), p.size(2), p.size(3), p.size(4),
                           p.size(6), p.size(7), p.size(8)});
@@ -398,7 +376,6 @@ torch::Tensor Patches::patches_to_matrix(
     torch::Tensor A_matrix;
 
     if (!unstable_idx.has_value()) {
-        // Non-sparse case: pieces shape is (out_c, batch, out_h, out_w, c, h, w)
         if (p.dim() != 7) {
             throw std::runtime_error("patches_to_matrix: expected 7D tensor for non-sparse case, got " +
                                     std::to_string(p.dim()) + "D");
@@ -409,7 +386,6 @@ torch::Tensor Patches::patches_to_matrix(
         output_x = p.size(2);
         output_y = p.size(3);
 
-        // Create output matrix with room for padding
         int64_t padded_h = input_x + padding[2] + padding[3];
         int64_t padded_w = input_y + padding[0] + padding[1];
 
@@ -418,11 +394,8 @@ torch::Tensor Patches::patches_to_matrix(
             p.options()
         );
 
-        // Get strides of the output matrix
         auto orig_stride = A_matrix.strides();
 
-        // Create strided view for efficient filling
-        // This is the key optimization - we create a view that maps to sliding windows
         torch::Tensor matrix_strided = torch::as_strided(
             A_matrix,
             {batch_size, output_channel, output_x, output_y, output_x, output_y,
@@ -431,9 +404,7 @@ torch::Tensor Patches::patches_to_matrix(
              padded_w * str[0], str[1], orig_stride[4], padded_w, 1}
         );
 
-        // Fill using vectorized diagonal indexing (single GPU kernel instead of O(output_x*output_y) kernels)
-        // pieces has shape (out_c, batch, out_h, out_w, c, h, w)
-        // Need to transpose to (batch, out_c, out_h, out_w, c, h, w)
+        // Vectorized diagonal indexing -- single GPU kernel instead of O(output_x*output_y)
         torch::Tensor pieces_transposed = p.permute({1, 0, 2, 3, 4, 5, 6});
 
         {
@@ -443,7 +414,6 @@ torch::Tensor Patches::patches_to_matrix(
             torch::Tensor second_indices = torch::div(first_indices, output_y, "trunc");
             torch::Tensor third_indices = torch::fmod(first_indices, output_y);
 
-            // Merge spatial dims: (batch, out_c, out_h*out_w, c, h, w)
             torch::Tensor pieces_reshaped = pieces_transposed.reshape(
                 {batch_size, output_channel, output_x * output_y, input_channel, kernel_x, kernel_y});
 
@@ -452,11 +422,9 @@ torch::Tensor Patches::patches_to_matrix(
                 pieces_reshaped);
         }
 
-        // Reshape to final form
         A_matrix = A_matrix.view({batch_size, output_channel * output_x * output_y,
                                   input_channel, padded_h, padded_w});
     } else {
-        // Sparse case: pieces shape is (unstable_size, batch, c, h, w)
         const auto& idx = unstable_idx.value();
         int64_t unstable_size = idx[0].numel();
         batch_size = p.size(1);
@@ -464,7 +432,6 @@ torch::Tensor Patches::patches_to_matrix(
         output_x = output_shape[2];
         output_y = output_shape[3];
 
-        // Create partial A matrix for unstable neurons only
         int64_t padded_h = input_x + padding[2] + padding[3];
         int64_t padded_w = input_y + padding[0] + padding[1];
 
@@ -475,21 +442,16 @@ torch::Tensor Patches::patches_to_matrix(
 
         auto orig_stride = A_matrix.strides();
 
-        // Create strided view
-        // The last dim of A_matrix is flattened (padded_h * padded_w), so advancing
-        // one row in the 2D input = padded_w elements, NOT padded_h.
+        // Last dim is flattened (padded_h * padded_w), so row stride = padded_w
         torch::Tensor matrix_strided = torch::as_strided(
             A_matrix,
             {batch_size, unstable_size, output_x, output_y, input_channel, kernel_x, kernel_y},
             {orig_stride[0], orig_stride[1], padded_w * str[0], str[1], orig_stride[2], padded_w, 1}
         );
 
-        // pieces has shape (unstable_size, batch, c, h, w)
-        // Transpose to (batch, unstable_size, c, h, w)
         torch::Tensor pieces_transposed = p.permute({1, 0, 2, 3, 4});
 
-        // Fill at unstable positions using vectorized GPU indexing (single kernel)
-        // idx[1] = out_h indices, idx[2] = out_w indices (stay on GPU)
+        // Vectorized fill at unstable positions -- single GPU kernel
         {
             using namespace torch::indexing;
             auto dev_opts = torch::TensorOptions().dtype(torch::kLong).device(p.device());
@@ -500,11 +462,9 @@ torch::Tensor Patches::patches_to_matrix(
                 pieces_transposed);
         }
 
-        // Reshape to final form
         A_matrix = A_matrix.view({batch_size, unstable_size, input_channel, padded_h, padded_w});
     }
 
-    // Remove padding from the result
     {
         using namespace torch::indexing;
         A_matrix = A_matrix.index({
@@ -514,7 +474,6 @@ torch::Tensor Patches::patches_to_matrix(
         });
     }
 
-    // Handle inserted zeros - subsample to remove them
     if (inserted_zeros > 0) {
         using namespace torch::indexing;
         A_matrix = A_matrix.index({

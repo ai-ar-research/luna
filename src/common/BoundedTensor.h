@@ -1,16 +1,27 @@
+/*********************                                                        */
+/*! \file BoundedTensor.h
+ ** \verbatim
+ ** This file is part of the Luna project.
+ ** Copyright (c) 2025-2026 by the authors listed in the file AUTHORS
+ ** in the top-level source directory) and their institutional affiliations.
+ ** All rights reserved. See the file COPYING in the top-level source
+ ** directory for licensing information.\endverbatim
+ **
+ **/
+
 #ifndef __BoundedTensor_h__
 #define __BoundedTensor_h__
 
 #include <iostream>
 
-// Undefine Warning macro to avoid conflict with PyTorch
+// avoid conflict with PyTorch's Warning macro
 #ifdef Warning
 #undef Warning
 #endif
 
 #include <torch/torch.h>
 
-// Redefine Warning macro for CVC4 compatibility
+// restore CVC4 Warning macro
 #ifndef Warning
 #define Warning (! ::CVC4::WarningChannel.isOn()) ? ::CVC4::nullCvc4Stream : ::CVC4::WarningChannel
 #endif
@@ -29,13 +40,12 @@ public:
     {
     }
 
-    // Copy constructor to fix deprecation warning
+    // suppress implicit-copy deprecation
     BoundedTensor( const BoundedTensor<T> &other )
         : _container( other._container )
     {
     }
 
-    // Access methods
     T &lower()
     {
         return _container.first;
@@ -56,14 +66,12 @@ public:
         return _container.second;
     }
 
-    // Assignment
     BoundedTensor<T> &operator=( const BoundedTensor<T> &other )
     {
         _container = other._container;
         return *this;
     }
 
-    // Width of the bound
     T width() const
     {
         if constexpr (std::is_same_v<T, torch::Tensor>) {
@@ -73,7 +81,6 @@ public:
         }
     }
 
-    // Center of the bound
     T center() const
     {
         if constexpr (std::is_same_v<T, torch::Tensor>) {
@@ -83,7 +90,6 @@ public:
         }
     }
 
-    // Comparisons
     bool operator==( const BoundedTensor<T> &other ) const
     {
         if constexpr (std::is_same_v<T, torch::Tensor>) {
@@ -102,12 +108,11 @@ public:
     bool operator<( const BoundedTensor<T> &other ) const
     {
         if constexpr (std::is_same_v<T, torch::Tensor>) {
-            // Compare by center, then by width
             T thisCenter = center();
             T otherCenter = other.center();
             T thisWidth = width();
             T otherWidth = other.width();
-            
+
             if (torch::all(torch::eq(thisCenter, otherCenter)).template item<bool>()) {
                 return torch::all(torch::lt(thisWidth, otherWidth)).template item<bool>();
             }
@@ -127,11 +132,3 @@ template <class T> std::ostream &operator<<( std::ostream &stream, const Bounded
 }
 
 #endif // __BoundedTensor_h__
-
-//
-// Local Variables:
-// compile-command: "make -C ../.. "
-// tags-file-name: "../../TAGS"
-// c-basic-offset: 4
-// End:
-//

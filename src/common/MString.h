@@ -1,16 +1,12 @@
 /*********************                                                        */
 /*! \file MString.h
  ** \verbatim
- ** Top contributors (to current version):
- **   Guy Katz
- ** This file is part of the Marabou project.
- ** Copyright (c) 2017-2024 by the authors listed in the file AUTHORS
+ ** This file is part of the Luna project.
+ ** Copyright (c) 2025-2026 by the authors listed in the file AUTHORS
  ** in the top-level source directory) and their institutional affiliations.
  ** All rights reserved. See the file COPYING in the top-level source
  ** directory for licensing information.\endverbatim
  **
- ** [[ Add lengthier description here ]]
-
  **/
 
 #ifndef __String_h__
@@ -64,37 +60,4 @@ protected:
 
 std::ostream &operator<<( std::ostream &stream, const String &string );
 
-#ifdef CXXTEST_RUNNING
-#include <cxxtest/ValueTraits.h>
-#include <stdio.h>
-namespace CxxTest {
-CXXTEST_TEMPLATE_INSTANTIATION
-class ValueTraits<String>
-{
-public:
-    ValueTraits( const String &string )
-        : _string( string )
-    {
-    }
-
-    const char *asString() const
-    {
-        return _string.ascii();
-    }
-
-private:
-    const String &_string;
-};
-} // namespace CxxTest
-
-#endif // CXXTEST_RUNNING
-
 #endif // __String_h__
-
-//
-// Local Variables:
-// compile-command: "make -C ../.. "
-// tags-file-name: "../../TAGS"
-// c-basic-offset: 4
-// End:
-//

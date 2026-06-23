@@ -1,16 +1,12 @@
 /*********************                                                        */
 /*! \file Set.h
  ** \verbatim
- ** Top contributors (to current version):
- **   Guy Katz
- ** This file is part of the Marabou project.
- ** Copyright (c) 2017-2024 by the authors listed in the file AUTHORS
+ ** This file is part of the Luna project.
+ ** Copyright (c) 2025-2026 by the authors listed in the file AUTHORS
  ** in the top-level source directory) and their institutional affiliations.
  ** All rights reserved. See the file COPYING in the top-level source
  ** directory for licensing information.\endverbatim
  **
- ** [[ Add lengthier description here ]]
-
  **/
 
 #ifndef __Set_h__
@@ -90,13 +86,11 @@ public:
     }
 
     static bool containedIn( const Set<Value> &one, const Set<Value> &two )
-    // Is one contained in two?
     {
         return Set<Value>::difference( one, two ).empty();
     }
 
     static Set<Value> difference( const Set<Value> &one, const Set<Value> &two )
-    // Elements that appear in one, but do not appear in two.
     {
         Set<Value> difference;
         std::set_difference( one.begin(),
@@ -195,11 +189,3 @@ protected:
 };
 
 #endif // __Set_h__
-
-//
-// Local Variables:
-// compile-command: "make -C ../.. "
-// tags-file-name: "../../TAGS"
-// c-basic-offset: 4
-// End:
-//
