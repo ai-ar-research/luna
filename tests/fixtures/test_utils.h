@@ -75,11 +75,10 @@ public:
 
 } // namespace test
 
-// Custom CxxTest macros for soundness checks
 #define EXPECT_BOUNDS_SOUND(bounds, value) \
-    TS_ASSERT(test::SoundnessChecker::boundsContainValue(bounds, value))
+    EXPECT_TRUE(test::SoundnessChecker::boundsContainValue(bounds, value))
 
 #define ASSERT_BOUNDS_SOUND(bounds, value) \
-    TS_ASSERT(test::SoundnessChecker::boundsContainValue(bounds, value))
+    ASSERT_TRUE(test::SoundnessChecker::boundsContainValue(bounds, value))
 
 #endif // __TEST_UTILS_H__

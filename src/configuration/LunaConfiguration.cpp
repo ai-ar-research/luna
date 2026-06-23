@@ -33,7 +33,7 @@ bool LunaConfiguration::USE_SHARED_ALPHA = false;
 unsigned LunaConfiguration::EARLY_STOP_PATIENCE = 10;
 bool LunaConfiguration::FIX_INTERM_BOUNDS = true;
 bool LunaConfiguration::STABILIZE_INTERMEDIATE_BOUNDS = true;
-bool LunaConfiguration::RECOMPUTE_INTERMEDIATE_BOUNDS = false;
+bool LunaConfiguration::RECOMPUTE_INTERMEDIATE_BOUNDS = true;
 String LunaConfiguration::OPTIMIZER = "adam";
 float LunaConfiguration::START_SAVE_BEST = 0.5f;
 LunaConfiguration::BoundSide LunaConfiguration::BOUND_SIDE =
@@ -126,7 +126,7 @@ void LunaConfiguration::resetToDefaults()
     EARLY_STOP_PATIENCE = 10;
     FIX_INTERM_BOUNDS = true;
     STABILIZE_INTERMEDIATE_BOUNDS = true;
-    RECOMPUTE_INTERMEDIATE_BOUNDS = false;
+    RECOMPUTE_INTERMEDIATE_BOUNDS = true;
     OPTIMIZER = "adam";
     START_SAVE_BEST = 0.5f;
     BOUND_SIDE = BoundSide::Lower;

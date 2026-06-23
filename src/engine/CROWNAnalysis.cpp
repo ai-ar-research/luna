@@ -299,21 +299,6 @@ void CROWNAnalysis::backwardFrom(unsigned startIndex, const Vector<unsigned>& un
         }
     }
 
-    if (!isOutputNode) {
-        auto* convCheck = dynamic_cast<BoundedConvNode*>(startNode.get());
-        int64_t outFeatures = 0;
-        if (convCheck) {
-            const auto& s = convCheck->getOutputShape();
-            if (s.size() == 4) outFeatures = (int64_t)s[1] * (int64_t)s[2] * (int64_t)s[3];
-        }
-        printf("[CROWN] node %u: cuda=%s, outFeatures=%lld, threshold=%lld, usePatchesInit=%s\n",
-               startIndex,
-               cudaAvailable ? "yes" : "no",
-               (long long)outFeatures,
-               (long long)PATCHES_SIZE_THRESHOLD,
-               usePatchesInit ? "yes" : "no");
-    }
-
     // Skip dense identity when patches mode is active
     if (isOutputNode && C != nullptr) {
         initMatrix = preprocessC(*C, outputIndex);
@@ -332,10 +317,6 @@ void CROWNAnalysis::backwardFrom(unsigned startIndex, const Vector<unsigned>& un
     } else if (!usePatchesInit) {
         initMatrix = preprocessC(torch::Tensor(), startIndex);
         numSpecs = initMatrix.size(0);
-        if (!isOutputNode) {
-            printf("[CROWN] node %u: using DENSE identity [%ld x %ld x %ld] (CPU fast path)\n",
-                   startIndex, initMatrix.size(0), initMatrix.size(1), initMatrix.size(2));
-        }
         if (isOutputNode) {
             log(Stringf("backwardFrom() - Using identity matrix (no specification matrix), shape [%ld, %ld, %ld]",
                         initMatrix.size(0), initMatrix.size(1), initMatrix.size(2)));
@@ -350,8 +331,6 @@ void CROWNAnalysis::backwardFrom(unsigned startIndex, const Vector<unsigned>& un
         int64_t outC  = patchOutputShape[1];
         int64_t outH  = patchOutputShape[2];
         int64_t outW  = patchOutputShape[3];
-        printf("[CROWN] node %u: using PATCHES identity [%lld x %lld x %lld x %lld] (GPU path)\n",
-               startIndex, (long long)batch, (long long)outC, (long long)outH, (long long)outW);
 
         auto biasOpts = torch::TensorOptions().dtype(torch::kFloat32).device(_torchModel->getDevice());
 

@@ -3,7 +3,7 @@
 
 #include "src/common/BoundedTensor.h"
 #include <torch/torch.h>
-#include <cxxtest/TestSuite.h>
+#include <gtest/gtest.h>
 #include <string>
 #include <sstream>
 
@@ -40,15 +40,15 @@ public:
 
 // Custom Google Test macros for tensor comparison
 #define EXPECT_TENSORS_CLOSE(t1, t2, atol, rtol) \
-    TS_ASSERT(test::TensorComparator::allClose(t1, t2, atol, rtol))
+    EXPECT_TRUE(test::TensorComparator::allClose(t1, t2, atol, rtol))
 
 #define EXPECT_BOUNDS_CLOSE(b1, b2, atol, rtol) \
-    TS_ASSERT(test::TensorComparator::boundsClose(b1, b2, atol, rtol))
+    EXPECT_TRUE(test::TensorComparator::boundsClose(b1, b2, atol, rtol))
 
 #define ASSERT_TENSORS_CLOSE(t1, t2, atol, rtol) \
-    TS_ASSERT(test::TensorComparator::allClose(t1, t2, atol, rtol))
+    ASSERT_TRUE(test::TensorComparator::allClose(t1, t2, atol, rtol))
 
 #define ASSERT_BOUNDS_CLOSE(b1, b2, atol, rtol) \
-    TS_ASSERT(test::TensorComparator::boundsClose(b1, b2, atol, rtol))
+    ASSERT_TRUE(test::TensorComparator::boundsClose(b1, b2, atol, rtol))
 
 #endif // __TENSOR_COMPARATORS_H__

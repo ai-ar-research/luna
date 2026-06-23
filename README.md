@@ -2,7 +2,7 @@
 
 ## Introduction
 
-Luna is a bound propagation egine for neural network verification engine written in C++17with Python bindings. It implements state-of-the-art linear relaxation basedperturbation analysis (LiRPA) algorithms, including
+Luna is a bound propagation engine for neural network verification written in C++20 with Python bindings. It implements state-of-the-art linear relaxation based perturbation analysis (LiRPA) algorithms, including
 [CROWN](https://arxiv.org/pdf/1811.00866.pdf) and
 [Alpha-CROWN](https://arxiv.org/pdf/2011.13824.pdf), to compute guaranteed
 output bounds for neural networks under input perturbations.
@@ -66,7 +66,7 @@ luna/
 │   │   └── nodes/                # Per-layer bound implementations
 │   │       ├── BoundedLinearNode
 │   │       ├── BoundedConvNode
-│   │       ├── BoundedReLUNode  
+│   │       ├── BoundedReLUNode
 │   │       ├── BoundedSigmoidNode
 │   │       └── ...               # 15+ node types
 │   ├── input_parsers/
@@ -78,7 +78,7 @@ luna/
 │   ├── lunapy.py                 # High-level Python API
 │   └── examples/                 # Tutorial examples
 ├── tests/
-│   ├── unit/                     # CxxTest unit tests
+│   ├── unit/                     # Google Test unit tests
 │   ├── integration/              # End-to-end verification tests
 │   └── property/                 # Invariant-based tests
 └── resources/
@@ -90,98 +90,88 @@ luna/
 
 ### Requirements
 
-- CMake 3.16+
-- C++17 compiler
-- PyTorch 2.2.1+ (libtorch)
+- CMake 3.24+
+- C++20 compiler
+- PyTorch 2.5.1+ (Python package or standalone libtorch)
 
-The following dependencies are downloaded automatically by the build system if
-not found:
+The following dependencies are fetched automatically via CMake FetchContent
+when `--auto-download` is passed to `configure.sh`:
 
-- Boost 1.84.0
 - Protobuf 3.19.2
 - ONNX 1.15.0
 - pybind11 2.11.1
+- Google Test 1.15.2
+- Google Benchmark 1.8.3
 
 ### Building
 
 ```bash
 git clone <repository-url>
 cd luna
-mkdir build && cd build
-cmake ../
-make -j$(nproc)
+./configure.sh --auto-download
+make
 ```
 
-### Building with GPU Support (HPC Cluster)
+### Running Tests
 
-To build Luna with CUDA support on an HPC cluster, you need to build on a GPU
-node with the appropriate modules loaded.
+```bash
+make test
+```
+
+### Configure Options
+
+`configure.sh` accepts the following flags:
+
+| Flag | Description |
+|------|-------------|
+| `--cpu` | Force CPU-only build (default) |
+| `--gpu` | Enable CUDA libtorch |
+| `--auto-download` | Fetch missing dependencies via FetchContent |
+| `--debug` | Build in Debug mode |
+| `--build-dir DIR` | Set build directory (default: `build`) |
+| `--no-tests` | Disable test build |
+| `--no-python` | Disable Python bindings |
+
+GPU mode is auto-detected if `nvidia-smi` and a CUDA-enabled PyTorch are found.
+
+### Make Targets
+
+| Target | Description |
+|--------|-------------|
+| `make` | Build the project |
+| `make test` | Run all tests |
+| `make clean` | Clean build artifacts |
+| `make install` | Install binaries |
+
+### Building with GPU Support (HPC Cluster)
 
 **1. Activate your Python environment with CUDA-enabled PyTorch:**
 
 ```bash
 conda activate ab_env
-# OR if using venv:
-# source ~/ab_env/bin/activate
 ```
 
-Verify PyTorch has CUDA support (should show `+cu118` or similar):
-
-```bash
-python3 -c "import torch; print('PyTorch version:', torch.__version__); print('CUDA available:', torch.cuda.is_available())"
-```
-
-**2. Create a build directory:**
-
-```bash
-cd ~/luna
-mkdir -p build
-cd build
-```
-
-**3. Request an interactive GPU node session:**
+**2. Request an interactive GPU node and load modules:**
 
 ```bash
 srun -p gpu-a100-q --gres=gpu:1 --time=01:00:00 --pty bash
-```
-
-**4. Load the required modules on the GPU node:**
-
-```bash
 module load cmake-gcc11/3.21.3
 module load cuda11.8/toolkit/11.8.0
 ```
 
-Verify the modules loaded correctly:
+**3. Configure and build:**
 
 ```bash
-which cmake
-which nvcc
-nvcc --version
+./configure.sh --gpu --auto-download
+make
 ```
 
-**5. Configure and build:**
+The build system auto-detects libtorch from your Python environment. If no
+Python PyTorch is found and `--auto-download` is set, a pre-built libtorch
+(CPU or CUDA) is fetched automatically.
 
-```bash
-cd ~/luna/build
-
-cmake .. -DCMAKE_BUILD_TYPE=Release \
-  -DTorch_DIR=$VIRTUAL_ENV/lib/python3.9/site-packages/torch/share/cmake/Torch \
-  -DBUILD_PYTHON_BINDINGS=OFF
-
-make -j2
-```
-
-**6. Verify the build and exit the GPU node:**
-
-```bash
-ls -la bin/luna
-./bin/luna --help
-exit
-```
-
-> **Note:** The exact module names, partition name (`gpu-a100-q`), and Python
-> path may differ depending on your cluster configuration. Adjust accordingly.
+> **Note:** The exact module names and partition name may differ depending on
+> your cluster configuration.
 
 ## Quick Start
 

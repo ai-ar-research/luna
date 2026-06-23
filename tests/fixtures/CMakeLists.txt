@@ -22,8 +22,6 @@ target_include_directories(TestFixtures PUBLIC
     ${PROJECT_SOURCE_DIR}/src/engine/nodes
     ${PROJECT_SOURCE_DIR}/src/input_parsers
     ${PROJECT_SOURCE_DIR}/src/configuration
-    ${LIBS_INCLUDES}
-    ${CXXTEST_INCLUDE_DIR}
 )
 
 target_compile_options(TestFixtures PRIVATE ${TEST_COMPILE_FLAGS})
@@ -31,5 +29,6 @@ target_compile_options(TestFixtures PRIVATE ${TEST_COMPILE_FLAGS})
 # Link libraries (combine into one call)
 target_link_libraries(TestFixtures PUBLIC
     ${LUNA_LIB}
+    GTest::gtest
     ${LIBS}
 )

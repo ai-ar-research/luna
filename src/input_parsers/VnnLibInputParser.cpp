@@ -14,8 +14,8 @@
 #include "InputParserError.h"
 #include "MStringf.h"
 
-#include <boost/regex.hpp>
 #include <limits>
+#include <regex>
 
 double VnnLibInputParser::extractScalar(const String &token)
 {
@@ -68,16 +68,16 @@ String VnnLibInputParser::readVnnlibFile(const String &vnnlibFilePath)
 
 Vector<String> VnnLibInputParser::tokenize(const String &vnnlibContent)
 {
-    boost::regex re(R"(\(|\)|[\w\-\\.]+|<=|>=|\+|-|\*)");
+    std::regex re(R"(\(|\)|[\w\-\\.]+|<=|>=|\+|-|\*)");
 
-    auto tokens_begin = boost::cregex_token_iterator(
+    auto tokens_begin = std::cregex_token_iterator(
         vnnlibContent.ascii(), vnnlibContent.ascii() + vnnlibContent.length(), re);
-    auto tokens_end = boost::cregex_token_iterator();
+    auto tokens_end = std::cregex_token_iterator();
 
     Vector<String> tokens;
-    for (boost::cregex_token_iterator it = tokens_begin; it != tokens_end; ++it)
+    for (std::cregex_token_iterator it = tokens_begin; it != tokens_end; ++it)
     {
-        boost::csub_match match = *it;
+        std::csub_match match = *it;
         tokens.append(String(match.str().c_str()));
     }
 

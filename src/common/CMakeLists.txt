@@ -1,16 +1,14 @@
-# src/common/CMakeLists.txt
-# Common module sources
+target_sources(${LUNA_LIB} PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/ConstSimpleData.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/Error.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/File.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/HeapData.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/IFile.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/MString.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/TimeUtils.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/real/Errno.cpp
+)
 
-# Add common source files
-file(GLOB SRCS_COMMON "${CMAKE_CURRENT_SOURCE_DIR}/*.cpp")
-target_sources(${LUNA_LIB} PRIVATE ${SRCS_COMMON})
-
-# Add real subdirectory sources
-file(GLOB SRCS_COMMON_REAL "${CMAKE_CURRENT_SOURCE_DIR}/real/*.cpp")
-target_sources(${LUNA_LIB} PRIVATE ${SRCS_COMMON_REAL})
-
-# Set include directories for common module
 target_include_directories(${LUNA_LIB} PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}
 )
-

@@ -39,29 +39,4 @@ public:
     }
 };
 
-#ifdef CXXTEST_RUNNING
-#include <cxxtest/ValueTraits.h>
-#include <stdio.h>
-namespace CxxTest {
-CXXTEST_TEMPLATE_INSTANTIATION
-class ValueTraits<Stringf>
-{
-public:
-    ValueTraits( const Stringf &stringf )
-        : _stringf( stringf )
-    {
-    }
-
-    const char *asString() const
-    {
-        return _stringf.ascii();
-    }
-
-private:
-    const Stringf &_stringf;
-};
-} // namespace CxxTest
-
-#endif // CXXTEST_RUNNING
-
 #endif // __Stringf_h__
