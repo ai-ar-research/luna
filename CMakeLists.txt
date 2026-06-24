@@ -16,6 +16,10 @@ option(RUN_UNIT_TEST "Build and register unit tests" ON)
 option(RUN_REGRESS_TEST "Build and register regression tests" OFF)
 option(RUN_SYSTEM_TEST "Build and register system tests" OFF)
 option(RUN_PYTHON_TEST "Enable Python-based regression tests" OFF)
+# Default ON so standalone builds keep producing the `luna` CLI; embedding
+# projects flip this OFF to consume only the LUNACore library / luna::core
+# alias without paying for the executable build or its install side-effects.
+option(LUNA_BUILD_EXECUTABLE "Build the luna CLI executable" ON)
 
 ###################
 ## Git variables ##
@@ -54,28 +58,45 @@ include(cmake/versions.cmake)
 ## Protobuf ##
 ##############
 
-# Protobuf must be declared before libtorch to prevent target conflicts
+# Protobuf must be declared before libtorch to prevent target conflicts.
+# Prefer a system / conda Protobuf when one is available so embedders don't
+# end up with two protobuf static archives (Luna's bundled 3.19.2 plus the
+# host project's) in the final link line. FetchContent is the fallback for
+# standalone builds in environments without a usable Protobuf install.
 set(PROTOBUF_VERSION ${LUNA_PROTOBUF_VERSION})
 
-set(protobuf_BUILD_TESTS OFF CACHE BOOL "" FORCE)
-set(protobuf_BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
-set(protobuf_WITH_ZLIB OFF CACHE BOOL "" FORCE)
-set(protobuf_MSVC_STATIC_RUNTIME OFF CACHE BOOL "" FORCE)
+find_package(Protobuf CONFIG QUIET)
 
-# protobuf 3.19.x has cmake_minimum_required(VERSION 2.8.12)
-set(CMAKE_POLICY_VERSION_MINIMUM 3.5)
+if(Protobuf_FOUND AND TARGET protobuf::libprotobuf AND TARGET protobuf::protoc)
+    message(STATUS "Found system Protobuf ${Protobuf_VERSION} via CONFIG; skipping FetchContent")
+    set(LUNA_PROTOBUF_TARGET protobuf::libprotobuf)
+    set(LUNA_PROTOC_TARGET protobuf::protoc)
+else()
+    message(STATUS "System Protobuf not found; fetching ${PROTOBUF_VERSION} via FetchContent")
 
-FetchContent_Declare(protobuf
-    URL https://github.com/protocolbuffers/protobuf/releases/download/v${PROTOBUF_VERSION}/protobuf-cpp-${PROTOBUF_VERSION}.tar.gz
-    DOWNLOAD_EXTRACT_TIMESTAMP TRUE
-    SOURCE_SUBDIR cmake
-    EXCLUDE_FROM_ALL
-)
-FetchContent_MakeAvailable(protobuf)
+    set(protobuf_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+    set(protobuf_BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+    set(protobuf_WITH_ZLIB OFF CACHE BOOL "" FORCE)
+    set(protobuf_MSVC_STATIC_RUNTIME OFF CACHE BOOL "" FORCE)
 
-unset(CMAKE_POLICY_VERSION_MINIMUM)
+    # protobuf 3.19.x has cmake_minimum_required(VERSION 2.8.12)
+    set(CMAKE_POLICY_VERSION_MINIMUM 3.5)
 
-list(APPEND LIBS libprotobuf)
+    FetchContent_Declare(protobuf
+        URL https://github.com/protocolbuffers/protobuf/releases/download/v${PROTOBUF_VERSION}/protobuf-cpp-${PROTOBUF_VERSION}.tar.gz
+        DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+        SOURCE_SUBDIR cmake
+        EXCLUDE_FROM_ALL
+    )
+    FetchContent_MakeAvailable(protobuf)
+
+    unset(CMAKE_POLICY_VERSION_MINIMUM)
+
+    set(LUNA_PROTOBUF_TARGET libprotobuf)
+    set(LUNA_PROTOC_TARGET protoc)
+endif()
+
+list(APPEND LIBS ${LUNA_PROTOBUF_TARGET})
 
 ##########
 ## ONNX ##
@@ -100,9 +121,9 @@ endif()
 
 add_custom_command(
     OUTPUT "${ONNX_PROTO_DIR}/onnx.proto3.pb.cc" "${ONNX_PROTO_DIR}/onnx.proto3.pb.h"
-    COMMAND protoc --cpp_out=${ONNX_PROTO_DIR} -I${ONNX_PROTO_DIR} onnx.proto3
+    COMMAND ${LUNA_PROTOC_TARGET} --cpp_out=${ONNX_PROTO_DIR} -I${ONNX_PROTO_DIR} onnx.proto3
     WORKING_DIRECTORY ${ONNX_PROTO_DIR}
-    DEPENDS "${ONNX_PROTO_DIR}/onnx.proto3" protoc
+    DEPENDS "${ONNX_PROTO_DIR}/onnx.proto3" ${LUNA_PROTOC_TARGET}
     COMMENT "Compiling ONNX protobuf"
 )
 
@@ -128,32 +149,40 @@ execute_process(
 if(TORCH_PYTHON_RESULT EQUAL 0 AND TORCH_PYTHON_PREFIX)
     message(STATUS "Found PyTorch from Python environment: ${TORCH_PYTHON_PREFIX}")
     list(APPEND CMAKE_PREFIX_PATH ${TORCH_PYTHON_PREFIX})
-elseif(LUNA_AUTO_DOWNLOAD)
-    # FetchContent fallback: download pre-built libtorch
-    if(APPLE AND CMAKE_SYSTEM_PROCESSOR STREQUAL "arm64")
-        set(LIBTORCH_URL "https://download.pytorch.org/libtorch/cpu/libtorch-macos-arm64-${PYTORCH_VERSION}.zip")
-    elseif(APPLE)
-        set(LIBTORCH_URL "https://download.pytorch.org/libtorch/cpu/libtorch-macos-x86_64-${PYTORCH_VERSION}.zip")
-    elseif(LUNA_GPU)
-        set(LIBTORCH_URL "https://download.pytorch.org/libtorch/cu121/libtorch-cxx11-abi-shared-with-deps-${PYTORCH_VERSION}%2Bcu121.zip")
-    else()
-        set(LIBTORCH_URL "https://download.pytorch.org/libtorch/cpu/libtorch-cxx11-abi-shared-with-deps-${PYTORCH_VERSION}%2Bcpu.zip")
-    endif()
-
-    message(STATUS "Downloading libtorch from ${LIBTORCH_URL}")
-    FetchContent_Declare(libtorch
-        URL ${LIBTORCH_URL}
-        DOWNLOAD_EXTRACT_TIMESTAMP TRUE
-    )
-    FetchContent_MakeAvailable(libtorch)
-    list(APPEND CMAKE_PREFIX_PATH ${libtorch_SOURCE_DIR})
 else()
-    message(FATAL_ERROR
-        "PyTorch not found in Python environment and LUNA_AUTO_DOWNLOAD is OFF.\n"
-        "Either install PyTorch in your Python environment:\n"
-        "  pip install torch\n"
-        "Or re-run with -DLUNA_AUTO_DOWNLOAD=ON to download libtorch automatically."
-    )
+    # Embedders (e.g. Marabou3) forward their own CMAKE_PREFIX_PATH that
+    # already points at a usable libtorch; honour that before forcing a
+    # download. find_package below issues REQUIRED, so a real miss still
+    # FATALs -- this just unlocks the embedder path.
+    find_package(Torch QUIET CONFIG)
+endif()
+
+if(NOT Torch_FOUND AND NOT TORCH_PYTHON_PREFIX)
+    if(LUNA_AUTO_DOWNLOAD)
+        if(APPLE AND CMAKE_SYSTEM_PROCESSOR STREQUAL "arm64")
+            set(LIBTORCH_URL "https://download.pytorch.org/libtorch/cpu/libtorch-macos-arm64-${PYTORCH_VERSION}.zip")
+        elseif(APPLE)
+            set(LIBTORCH_URL "https://download.pytorch.org/libtorch/cpu/libtorch-macos-x86_64-${PYTORCH_VERSION}.zip")
+        elseif(LUNA_GPU)
+            set(LIBTORCH_URL "https://download.pytorch.org/libtorch/cu121/libtorch-cxx11-abi-shared-with-deps-${PYTORCH_VERSION}%2Bcu121.zip")
+        else()
+            set(LIBTORCH_URL "https://download.pytorch.org/libtorch/cpu/libtorch-cxx11-abi-shared-with-deps-${PYTORCH_VERSION}%2Bcpu.zip")
+        endif()
+
+        message(STATUS "Downloading libtorch from ${LIBTORCH_URL}")
+        FetchContent_Declare(libtorch
+            URL ${LIBTORCH_URL}
+            DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+        )
+        FetchContent_MakeAvailable(libtorch)
+        list(APPEND CMAKE_PREFIX_PATH ${libtorch_SOURCE_DIR})
+    else()
+        message(FATAL_ERROR
+            "PyTorch not found via Python, embedder CMAKE_PREFIX_PATH, or LUNA_AUTO_DOWNLOAD.\n"
+            "Either install PyTorch in your Python environment (pip install torch),\n"
+            "pass -DCMAKE_PREFIX_PATH=/path/to/libtorch, or re-run with -DLUNA_AUTO_DOWNLOAD=ON."
+        )
+    endif()
 endif()
 
 # Re-prepend conda prefix after libtorch discovery to prefer full shared libraries
@@ -209,6 +238,10 @@ list(APPEND LIBS Threads::Threads)
 
 # Create core library with ONNX dependencies
 add_library(${LUNA_LIB} ${DEPS_ONNX})
+# Namespaced alias so embedders link `luna::core` and get a clear error if
+# the target ever moves, instead of silently linking against a same-named
+# library that happens to be on the link line.
+add_library(luna::core ALIAS ${LUNA_LIB})
 
 target_compile_definitions(${LUNA_LIB} PUBLIC
     LUNA_VERSION="${PROJECT_VERSION}"
@@ -239,34 +272,35 @@ add_subdirectory(src/engine)
 add_subdirectory(src/input_parsers)
 add_subdirectory(src/configuration)
 
-# Build main luna executable
-add_executable(luna src/main.cpp src/engine/LunaMain.cpp)
-target_link_libraries(luna ${LUNA_LIB} ${LIBS})
-target_include_directories(luna PRIVATE
-    ${SRC_DIR}
-)
-target_compile_options(luna PRIVATE ${RELEASE_FLAGS})
+if(LUNA_BUILD_EXECUTABLE)
+    add_executable(luna src/main.cpp src/engine/LunaMain.cpp)
+    target_link_libraries(luna ${LUNA_LIB} ${LIBS})
+    target_include_directories(luna PRIVATE
+        ${SRC_DIR}
+    )
+    target_compile_options(luna PRIVATE ${RELEASE_FLAGS})
 
-# Copy luna executable to bin directory
-add_custom_command(TARGET luna POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E make_directory ${BIN_DIR}
-    COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:luna> ${BIN_DIR}/
-)
+    add_custom_command(TARGET luna POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E make_directory ${BIN_DIR}
+        COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:luna> ${BIN_DIR}/
+    )
 
-# Install luna executable to user-local bin directory (~/.local/bin)
-# This directory is typically already in PATH on macOS/Linux
-set(USER_LOCAL_BIN "$ENV{HOME}/.local/bin")
-install(TARGETS luna
-    RUNTIME DESTINATION ${USER_LOCAL_BIN}
-    COMPONENT Runtime
-)
+    # Mirror the CLI into ~/.local/bin so a standalone Luna build "just works"
+    # on PATH. Embedders set LUNA_BUILD_EXECUTABLE=OFF to skip this entirely;
+    # users who don't want the home-dir side-effect can also flip it off and
+    # rely on the BIN_DIR copy above plus a normal `cmake --install`.
+    set(USER_LOCAL_BIN "$ENV{HOME}/.local/bin")
+    install(TARGETS luna
+        RUNTIME DESTINATION ${USER_LOCAL_BIN}
+        COMPONENT Runtime
+    )
 
-# Automatically install to ~/.local/bin after build (so user can run 'luna' from anywhere)
-add_custom_command(TARGET luna POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E make_directory ${USER_LOCAL_BIN}
-    COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:luna> ${USER_LOCAL_BIN}/
-    COMMENT "Installing luna to ${USER_LOCAL_BIN} (add to PATH if needed)"
-)
+    add_custom_command(TARGET luna POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E make_directory ${USER_LOCAL_BIN}
+        COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:luna> ${USER_LOCAL_BIN}/
+        COMMENT "Installing luna to ${USER_LOCAL_BIN} (add to PATH if needed)"
+    )
+endif()
 
 ###################
 ## Testing Setup ##
