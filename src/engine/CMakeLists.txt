@@ -27,3 +27,11 @@ target_include_directories(${LUNA_LIB} PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/conv
     ${CMAKE_CURRENT_SOURCE_DIR}/nodes
 )
+
+# The path-based TorchModel constructors live in LUNAOnnxParser since
+# they delegate to OnnxToTorchParser::parse and would otherwise force
+# the onnx protobuf symbols into LUNACore. The class declaration stays
+# in TorchModel.h (shipped with LUNACore); only the ctor bodies move.
+target_sources(${LUNA_ONNX_PARSER_LIB} PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/TorchModelOnnxFactory.cpp
+)

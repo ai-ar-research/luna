@@ -33,6 +33,7 @@ function(luna_add_test TEST_NAME TEST_SOURCE TEST_LABEL TEST_TIER)
 
     target_link_libraries(${TEST_NAME}
         TestFixtures
+        ${LUNA_ONNX_PARSER_LIB}
         ${LUNA_LIB}
         GTest::gtest
         GTest::gtest_main

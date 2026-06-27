@@ -119,6 +119,25 @@ if(NOT EXISTS "${ONNX_PROTO_DIR}/onnx.proto3")
     endif()
 endif()
 
+# Rename the upstream `package onnx;` to `package luna_onnx;` so the
+# generated C++ types land in a Luna-specific namespace. Lets embedders
+# (e.g. Marabou3) link `luna::onnx_parser` alongside their own ONNX
+# protobuf codegen without colliding on protobuf's process-wide
+# descriptor pool. Idempotent - re-running on an already-patched file
+# leaves it alone because the substring `package onnx;` no longer
+# matches once it has been replaced.
+file(READ "${ONNX_PROTO_DIR}/onnx.proto3" _onnx_proto_contents)
+string(REPLACE
+    "package onnx;"
+    "package luna_onnx;"
+    _onnx_proto_contents_patched
+    "${_onnx_proto_contents}"
+)
+if(NOT _onnx_proto_contents STREQUAL _onnx_proto_contents_patched)
+    file(WRITE "${ONNX_PROTO_DIR}/onnx.proto3" "${_onnx_proto_contents_patched}")
+    message(STATUS "Patched ONNX proto package: onnx -> luna_onnx")
+endif()
+
 add_custom_command(
     OUTPUT "${ONNX_PROTO_DIR}/onnx.proto3.pb.cc" "${ONNX_PROTO_DIR}/onnx.proto3.pb.h"
     COMMAND ${LUNA_PROTOC_TARGET} --cpp_out=${ONNX_PROTO_DIR} -I${ONNX_PROTO_DIR} onnx.proto3
@@ -217,6 +236,7 @@ endif()
 ###########
 
 set(LUNA_LIB LUNACore)
+set(LUNA_ONNX_PARSER_LIB LUNAOnnxParser)
 set(BIN_DIR "${CMAKE_BINARY_DIR}/bin")
 
 # Compiler flags
@@ -236,8 +256,11 @@ set(THREADS_PREFER_PTHREAD_FLAG ON)
 find_package(Threads REQUIRED)
 list(APPEND LIBS Threads::Threads)
 
-# Create core library with ONNX dependencies
-add_library(${LUNA_LIB} ${DEPS_ONNX})
+# Core library carries the bound-prop engine, common utilities, and the
+# VNN-LIB parser. The generated ONNX protobuf symbols deliberately do
+# NOT live here; embedders that want to keep their binary free of the
+# `onnx::*` descriptor set link only `luna::core`.
+add_library(${LUNA_LIB})
 # Namespaced alias so embedders link `luna::core` and get a clear error if
 # the target ever moves, instead of silently linking against a same-named
 # library that happens to be on the link line.
@@ -253,9 +276,6 @@ target_compile_definitions(${LUNA_LIB} PUBLIC
 target_include_directories(${LUNA_LIB} PUBLIC
     ${SRC_DIR}
 )
-target_include_directories(${LUNA_LIB} SYSTEM PUBLIC
-    ${ONNX_PROTO_DIR}
-)
 
 # Link libraries
 if (BUILD_STATIC_LUNA)
@@ -266,7 +286,16 @@ endif()
 
 target_compile_options(${LUNA_LIB} PRIVATE ${RELEASE_FLAGS})
 
-# Add subdirectories - each will populate LUNACore using target_sources()
+# Optional ONNX parser. Holds the generated ONNX protobuf TU plus the
+# path-based TorchModel ctors that delegate into it. Depends on LUNACore
+# one-way (parser needs TorchModel types; core never reaches back).
+add_library(${LUNA_ONNX_PARSER_LIB} ${DEPS_ONNX})
+add_library(luna::onnx_parser ALIAS ${LUNA_ONNX_PARSER_LIB})
+target_link_libraries(${LUNA_ONNX_PARSER_LIB} PUBLIC ${LUNA_LIB} ${LUNA_PROTOBUF_TARGET})
+target_include_directories(${LUNA_ONNX_PARSER_LIB} SYSTEM PUBLIC ${ONNX_PROTO_DIR})
+target_compile_options(${LUNA_ONNX_PARSER_LIB} PRIVATE ${RELEASE_FLAGS})
+
+# Add subdirectories - each populates LUNACore and/or LUNAOnnxParser via target_sources()
 add_subdirectory(src/common)
 add_subdirectory(src/engine)
 add_subdirectory(src/input_parsers)
@@ -274,7 +303,7 @@ add_subdirectory(src/configuration)
 
 if(LUNA_BUILD_EXECUTABLE)
     add_executable(luna src/main.cpp src/engine/LunaMain.cpp)
-    target_link_libraries(luna ${LUNA_LIB} ${LIBS})
+    target_link_libraries(luna ${LUNA_ONNX_PARSER_LIB} ${LUNA_LIB} ${LIBS})
     target_include_directories(luna PRIVATE
         ${SRC_DIR}
     )
