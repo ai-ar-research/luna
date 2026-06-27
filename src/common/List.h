@@ -27,22 +27,20 @@ public:
     typedef typename Super::reverse_iterator reverse_iterator;
     typedef typename Super::const_reverse_iterator const_reverse_iterator;
 
-    List<T>()
-    {
-    }
+    List() {}
 
-    List<T>( const std::initializer_list<T> &initializerList )
+    List( const std::initializer_list<T> &initializerList )
         : _container( initializerList )
     {
     }
 
-    List<T>( unsigned size, T value )
+    List( unsigned size, T value )
         : _container( size, value )
     {
     }
 
     template <class InputIt>
-    List<T>( InputIt begin, InputIt end )
+    List( InputIt begin, InputIt end )
         : _container( begin, end )
     {
     }

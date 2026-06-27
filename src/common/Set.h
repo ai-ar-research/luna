@@ -32,11 +32,9 @@ public:
     typedef typename Super::const_iterator const_iterator;
     typedef typename Super::const_reverse_iterator const_reverse_iterator;
 
-    Set<Value>()
-    {
-    }
+    Set() {}
 
-    Set<Value>( const std::initializer_list<Value> &initializerList )
+    Set( const std::initializer_list<Value> &initializerList )
         : _container( initializerList )
     {
     }
@@ -93,10 +91,7 @@ public:
     static Set<Value> difference( const Set<Value> &one, const Set<Value> &two )
     {
         Set<Value> difference;
-        std::set_difference( one.begin(),
-                             one.end(),
-                             two.begin(),
-                             two.end(),
+        std::set_difference( one.begin(), one.end(), two.begin(), two.end(),
                              std::inserter( difference._container, difference.end() ) );
         return difference;
     }
@@ -104,10 +99,7 @@ public:
     static Set<Value> intersection( const Set<Value> &one, const Set<Value> &two )
     {
         Set<Value> intersection;
-        std::set_intersection( one.begin(),
-                               one.end(),
-                               two.begin(),
-                               two.end(),
+        std::set_intersection( one.begin(), one.end(), two.begin(), two.end(),
                                std::inserter( intersection._container, intersection.end() ) );
         return intersection;
     }
@@ -167,9 +159,7 @@ public:
         return _container;
     }
 
-    void print() const
-    {
-    }
+    void print() const {}
 
     Value getRandomElement()
     {

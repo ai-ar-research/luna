@@ -29,29 +29,27 @@ public:
 
     typedef typename Super::const_reverse_iterator const_reverse_iterator;
 
-    Vector<T>()
-    {
-    }
+    Vector() {}
 
-    Vector<T>( const Vector<T> &rhs ) = default;
+    Vector( const Vector<T> &rhs ) = default;
 
-    Vector<T>( const std::initializer_list<T> &initializerList )
+    Vector( const std::initializer_list<T> &initializerList )
         : _container( initializerList )
     {
     }
 
-    Vector<T>( unsigned size )
+    Vector( unsigned size )
         : _container( size )
     {
     }
 
-    Vector<T>( unsigned size, T value )
+    Vector( unsigned size, T value )
         : _container( size, value )
     {
     }
 
     template <class InputIt>
-    Vector<T>( InputIt begin, InputIt end )
+    Vector( InputIt begin, InputIt end )
         : _container( begin, end )
     {
     }
@@ -92,9 +90,7 @@ public:
         _container.insert( _container.begin(), value );
     }
 
-    virtual ~Vector()
-    {
-    }
+    virtual ~Vector() {}
 
     T *data()
     {
