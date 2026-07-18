@@ -67,8 +67,18 @@ set(PROTOBUF_VERSION ${LUNA_PROTOBUF_VERSION})
 
 find_package(Protobuf CONFIG QUIET)
 
+# Debian/Ubuntu's libprotobuf-dev installs no protobuf-config.cmake, so the
+# CONFIG probe alone misses a perfectly usable system Protobuf and we fall
+# through to FetchContent. An embedder that resolved the system Protobuf via
+# the MODULE form then links our 3.19.2-generated code against its own 3.21
+# libprotobuf.so and the build dies on undefined ArenaStringPtr symbols. The
+# MODULE form finds those installs and defines both imported targets.
+if(NOT (Protobuf_FOUND AND TARGET protobuf::libprotobuf AND TARGET protobuf::protoc))
+    find_package(Protobuf MODULE QUIET)
+endif()
+
 if(Protobuf_FOUND AND TARGET protobuf::libprotobuf AND TARGET protobuf::protoc)
-    message(STATUS "Found system Protobuf ${Protobuf_VERSION} via CONFIG; skipping FetchContent")
+    message(STATUS "Found system Protobuf ${Protobuf_VERSION}; skipping FetchContent")
     set(LUNA_PROTOBUF_TARGET protobuf::libprotobuf)
     set(LUNA_PROTOC_TARGET protobuf::protoc)
 else()
