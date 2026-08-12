@@ -941,8 +941,11 @@ void CROWNAnalysis::concretizeNode( unsigned startIndex, const Vector<unsigned> 
         inputLower = torch::zeros( { (long)inputSize }, options );
         inputUpper = torch::ones( { (long)inputSize }, options );
     }
-    inputLower = inputLower.to( torch::kFloat32 );
-    inputUpper = inputUpper.to( torch::kFloat32 );
+    // Flatten so batched or NCHW-shaped inputs concretize like flat vectors -
+    // ensure3x lifts a 1-D tensor to [1, n, 1] for the bmm and the patches
+    // path reshapes to its own input_shape either way
+    inputLower = inputLower.to( torch::kFloat32 ).flatten();
+    inputUpper = inputUpper.to( torch::kFloat32 ).flatten();
 
     log( Stringf( "concretizeNode() - Checking for A matrices at input node %d", inputIndex ) );
     log( Stringf( "concretizeNode() - _lA.exists(%d)=%d, _uA.exists(%d)=%d", inputIndex,
@@ -1070,7 +1073,11 @@ void CROWNAnalysis::concretizeNode( unsigned startIndex, const Vector<unsigned> 
 
         if ( lA.defined() && lA.dim() >= 2 )
         {
-            int nodeDim = inputLower.size( 0 );
+            // Compare total input elements, not dim 0 - a batched input like
+            // [1, n] has size(0) == 1, which spuriously routed every
+            // intermediate node to the IBP fallback even though ensure3x
+            // already normalizes such inputs for the bmm below
+            int nodeDim = static_cast<int>( inputLower.numel() );
             int expectedNodeDim = lA.size( -1 );
 
             if ( nodeDim != expectedNodeDim )

@@ -408,6 +408,13 @@ torch::Tensor AlphaCROWNAnalysis::computeOptimizedBounds( LunaConfiguration::Bou
         }
         restoreBestIntermediateBounds();
     }
+    else if ( !seededBounds.empty() )
+    {
+        // Recompute intermediates but hand the persisted bounds to concretizeNode's
+        // reference clamp, so every recomputed node is intersected with the caller's
+        // known-valid bounds and downstream layers see the tightened result
+        _crownAnalysis->setReferenceBounds( seededBounds );
+    }
 
     _crownAnalysis->run( true );
 
