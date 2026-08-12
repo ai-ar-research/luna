@@ -169,7 +169,18 @@ AlphaParameters &AlphaCROWNAnalysis::ensureAlphaFor( unsigned nodeIndex,
             spec_mismatch = ( storedSpecDim != specDim ) &&
                             !( ap.hasSpecDefaultSlot && storedSpecDim == specDim + 1 );
         }
-        if ( spec_mismatch )
+
+        // A cached entry sized for a different unstable set cannot be scattered
+        // back onto this node's neurons - its alpha columns are positional
+        bool unstable_mismatch = ( ap.numUnstable != numUnstable );
+        if ( !unstable_mismatch && numUnstable > 0 && ap.unstableIndices.defined() )
+        {
+            auto currentIndices =
+                torch::nonzero( unstableMask ).flatten().to( ap.unstableIndices.options() );
+            unstable_mismatch = !ap.unstableIndices.equal( currentIndices );
+        }
+
+        if ( spec_mismatch || unstable_mismatch )
         {
             perStart.erase( it );
             need_new = true;
