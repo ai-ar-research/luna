@@ -637,8 +637,52 @@ void CROWNAnalysis::backwardFrom( unsigned startIndex, const Vector<unsigned> &u
             }
 
             stage = "node.boundBackward";
-            node->boundBackward( currentLowerAlpha, currentUpperAlpha, inputBounds, A_matrices,
-                                 lbias, ubias );
+            try
+            {
+                node->boundBackward( currentLowerAlpha, currentUpperAlpha, inputBounds, A_matrices,
+                                     lbias, ubias );
+            }
+            catch ( const std::exception &e )
+            {
+                auto tensorShape = []( const torch::Tensor &tensor )
+                {
+                    std::ostringstream shape;
+                    shape << "[";
+                    for ( int64_t i = 0; i < tensor.dim(); ++i )
+                    {
+                        if ( i > 0 )
+                            shape << ",";
+                        shape << tensor.size( i );
+                    }
+                    shape << "]";
+                    return shape.str();
+                };
+                auto boundShape = [&tensorShape]( const BoundA &A )
+                {
+                    if ( !A.defined() )
+                        return std::string( "undefined" );
+                    if ( A.isTensor() )
+                        return std::string( "Tensor" ) + tensorShape( A.asTensor() );
+                    const auto patches = A.asPatches();
+                    return std::string( "Patches" ) + tensorShape( patches->patches );
+                };
+
+                std::ostringstream context;
+                context << "CROWNAnalysis::backwardFrom node.boundBackward failed node=" << current
+                        << " name=" << node->getNodeName().ascii()
+                        << " type=" << nodeTypeToString( nodetype )
+                        << " lA=" << boundShape( currentLowerAlpha )
+                        << " uA=" << boundShape( currentUpperAlpha ) << " inputBounds=";
+                for ( unsigned i = 0; i < inputBounds.size(); ++i )
+                {
+                    if ( i > 0 )
+                        context << ";";
+                    context << i << ":lower" << tensorShape( inputBounds[i].lower() ) << ",upper"
+                            << tensorShape( inputBounds[i].upper() );
+                }
+                context << ": " << e.what();
+                throw std::runtime_error( context.str() );
+            }
 
             stage = "propagateToDependencies";
             if ( _torchModel->getDependenciesMap().exists( current ) )
@@ -1592,6 +1636,11 @@ BoundA CROWNAnalysis::addA( const BoundA &A1, const BoundA &A2 )
         torch::Tensor t1 = A1.asTensor();
         torch::Tensor t2 = A2.asTensor();
 
+        if ( t1.dim() > 3 )
+            t1 = t1.flatten( 2 );
+        if ( t2.dim() > 3 )
+            t2 = t2.flatten( 2 );
+
         if ( t1.sizes() != t2.sizes() )
         {
             torch::Tensor t1_norm = t1;
@@ -1666,11 +1715,14 @@ BoundA CROWNAnalysis::addA( const BoundA &A1, const BoundA &A2 )
     }
     else
     {
-        // Mixed Tensor/Patches at skip connections — convert patches to dense then add
-        auto toTensor = []( const BoundA &A ) -> torch::Tensor
+        const torch::Tensor denseSibling = A1.isTensor() ? A1.asTensor() : A2.asTensor();
+        auto toTensor = [&denseSibling]( const BoundA &A ) -> torch::Tensor
         {
             if ( A.isTensor() )
-                return A.asTensor();
+            {
+                torch::Tensor tensor = A.asTensor();
+                return tensor.dim() > 3 ? tensor.flatten( 2 ) : tensor;
+            }
             auto p = A.asPatches();
             if ( p->identity == 1 && !p->output_shape.empty() )
             {
@@ -1678,13 +1730,7 @@ BoundA CROWNAnalysis::addA( const BoundA &A1, const BoundA &A2 )
                 int64_t H = p->output_shape[2];
                 int64_t W = p->output_shape[3];
                 int64_t n = C * H * W;
-                torch::Device target_device = torch::kCPU;
-                if ( p->unstable_idx.has_value() && !p->unstable_idx.value().empty() &&
-                     p->unstable_idx.value()[0].defined() )
-                {
-                    target_device = p->unstable_idx.value()[0].device();
-                }
-                auto opts = torch::TensorOptions().dtype( torch::kFloat32 ).device( target_device );
+                auto opts = denseSibling.options();
                 if ( p->unstable_idx.has_value() )
                 {
                     auto &idx = p->unstable_idx.value();
@@ -1708,7 +1754,11 @@ BoundA CROWNAnalysis::addA( const BoundA &A1, const BoundA &A2 )
                 {
                     mat = mat.permute( { 1, 0, 2, 3, 4 } ).flatten( 2 );
                 }
-                return mat;
+                else if ( mat.dim() > 3 )
+                {
+                    mat = mat.flatten( 2 );
+                }
+                return mat.to( denseSibling.options() );
             }
             throw std::runtime_error( "CROWNAnalysis::addA - Cannot convert Patches to matrix: "
                                       "input_shape empty and not identity" );
@@ -1717,7 +1767,21 @@ BoundA CROWNAnalysis::addA( const BoundA &A1, const BoundA &A2 )
         torch::Tensor t2 = toTensor( A2 );
         if ( t1.sizes() != t2.sizes() )
         {
-            return BoundA( t1 + t2 );
+            auto shapeString = []( const torch::Tensor &tensor )
+            {
+                std::string result = "[";
+                for ( int64_t i = 0; i < tensor.dim(); ++i )
+                {
+                    if ( i > 0 )
+                        result += ", ";
+                    result += std::to_string( tensor.size( i ) );
+                }
+                return result + "]";
+            };
+            throw std::runtime_error(
+                "CROWNAnalysis::addA - mixed Patches/Tensor shape mismatch after "
+                "canonicalization: A1.shape=" +
+                shapeString( t1 ) + " vs A2.shape=" + shapeString( t2 ) );
         }
         return BoundA( t1 + t2 );
     }

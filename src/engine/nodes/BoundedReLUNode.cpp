@@ -124,17 +124,30 @@ void BoundedReLUNode::boundBackward( const BoundA &last_lA, const BoundA &last_u
         if ( !v.defined() || !A.defined() )
             return v;
 
-        // Per-spec alpha: v=[spec, out], A=[spec, batch, out]
-        if ( v.dim() == 2 && A.dim() == 3 && v.size( 0 ) == A.size( 0 ) )
+        if ( A.dim() >= 3 )
         {
-            v = v.unsqueeze( 1 );
-            try
+            std::vector<int64_t> payload_shape;
+            int64_t payload_numel = 1;
+            for ( int64_t d = 2; d < A.dim(); ++d )
             {
-                return v.expand_as( A );
+                payload_shape.push_back( A.size( d ) );
+                payload_numel *= A.size( d );
             }
-            catch ( ... )
+
+            if ( v.dim() == 2 && v.size( 0 ) == A.size( 0 ) && v.size( 1 ) == payload_numel )
             {
-                return v;
+                std::vector<int64_t> target_shape = { A.size( 0 ), 1 };
+                target_shape.insert( target_shape.end(), payload_shape.begin(),
+                                     payload_shape.end() );
+                return v.reshape( target_shape ).expand_as( A );
+            }
+
+            if ( v.numel() == A.size( 1 ) * payload_numel )
+            {
+                std::vector<int64_t> target_shape = { 1, A.size( 1 ) };
+                target_shape.insert( target_shape.end(), payload_shape.begin(),
+                                     payload_shape.end() );
+                return v.reshape( target_shape ).expand_as( A );
             }
         }
 
