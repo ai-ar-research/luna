@@ -10,6 +10,140 @@
 using namespace NLR;
 using namespace test;
 
+namespace
+{
+
+template <class Function>
+void expectRuntimeErrorContaining( Function &&function, const std::string &expected )
+{
+    try
+    {
+        function();
+        FAIL() << "Expected std::runtime_error containing: " << expected;
+    }
+    catch ( const std::runtime_error &error )
+    {
+        EXPECT_NE( std::string( error.what() ).find( expected ), std::string::npos )
+            << "Unexpected diagnostic: " << error.what();
+    }
+}
+
+class BackwardContractNode : public BoundedTorchNode
+{
+public:
+    BackwardContractNode( bool perturbed, unsigned outputCount, bool firstOutputDefined,
+                          bool produceBias )
+        : _perturbed( perturbed )
+        , _outputCount( outputCount )
+        , _firstOutputDefined( firstOutputDefined )
+        , _produceBias( produceBias )
+    {
+        _nodeName = "contract";
+        _input_size = 2;
+        _output_size = 2;
+    }
+
+    NodeType getNodeType() const override
+    {
+        return NodeType::IDENTITY;
+    }
+    String getNodeName() const override
+    {
+        return _nodeName;
+    }
+    unsigned getNodeIndex() const override
+    {
+        return _nodeIndex;
+    }
+    torch::Tensor forward( const torch::Tensor &input ) override
+    {
+        return input;
+    }
+    BoundedTensor<torch::Tensor> computeIntervalBoundPropagation(
+        const Vector<BoundedTensor<torch::Tensor>> &inputBounds ) override
+    {
+        return inputBounds[0];
+    }
+    void boundBackward( const BoundA &last_lA, const BoundA &last_uA,
+                        const Vector<BoundedTensor<torch::Tensor>> &inputBounds,
+                        Vector<Pair<BoundA, BoundA>> &outputA, torch::Tensor &lbias,
+                        torch::Tensor &ubias ) override
+    {
+        (void)inputBounds;
+        outputA.clear();
+        for ( unsigned i = 0; i < _outputCount; ++i )
+        {
+            bool defined = i > 0 || _firstOutputDefined;
+            outputA.append( Pair<BoundA, BoundA>( defined ? last_lA : BoundA(),
+                                                  defined ? last_uA : BoundA() ) );
+        }
+        if ( _produceBias )
+        {
+            lbias = torch::ones( { 2, 1 } );
+            ubias = torch::ones( { 2, 1 } );
+        }
+    }
+    unsigned getInputSize() const override
+    {
+        return _input_size;
+    }
+    unsigned getOutputSize() const override
+    {
+        return _output_size;
+    }
+    bool isPerturbed() const override
+    {
+        return _perturbed;
+    }
+    void setInputSize( unsigned size ) override
+    {
+        _input_size = size;
+    }
+    void setOutputSize( unsigned size ) override
+    {
+        _output_size = size;
+    }
+    void setNodeIndex( unsigned index ) override
+    {
+        _nodeIndex = index;
+    }
+    void setNodeName( const String &name ) override
+    {
+        _nodeName = name;
+    }
+
+private:
+    bool _perturbed;
+    unsigned _outputCount;
+    bool _firstOutputDefined;
+    bool _produceBias;
+};
+
+std::unique_ptr<TorchModel> makeContractModel( const std::shared_ptr<BackwardContractNode> &node,
+                                               unsigned dependencyCount )
+{
+    Vector<std::shared_ptr<BoundedTorchNode>> nodes;
+    Vector<unsigned> inputs;
+    Map<unsigned, Vector<unsigned>> dependencies;
+    Vector<unsigned> nodeDependencies;
+    for ( unsigned i = 0; i < dependencyCount; ++i )
+    {
+        auto input = std::make_shared<BoundedInputNode>( i, 2, Stringf( "input%u", i ) );
+        input->setNodeIndex( i );
+        input->setOutputSize( 2 );
+        nodes.append( input );
+        inputs.append( i );
+        dependencies[i] = Vector<unsigned>();
+        nodeDependencies.append( i );
+    }
+    node->setNodeIndex( dependencyCount );
+    nodes.append( node );
+    dependencies[dependencyCount] = nodeDependencies;
+    return std::make_unique<TorchModel>( nodes, inputs, dependencyCount, dependencies );
+}
+
+} // namespace
+
 class CROWNAnalysisTest : public ::testing::Test
 {
 protected:
@@ -156,4 +290,78 @@ TEST_F( CROWNAnalysisTest, AddAMixedPatchesAndDenseRejectsIncompatibleFeaturesCl
         EXPECT_NE( message.find( "[4, 1, 4]" ), std::string::npos );
         EXPECT_NE( message.find( "[4, 1, 5]" ), std::string::npos );
     }
+}
+
+TEST_F( CROWNAnalysisTest, ConcreteBoundsRejectUnsupportedMultiBatchInsteadOfTruncating )
+{
+    auto model = ModelBuilder::createMLP( 3, {}, 2, false, false );
+    NLR::CROWNAnalysis analysis( model.get() );
+    auto A = torch::ones( { 2, 2, 3 } );
+    auto bias = torch::zeros( { 2, 2 } );
+    auto lower = torch::zeros( { 2, 3 } );
+    auto upper = torch::ones( { 2, 3 } );
+
+    expectRuntimeErrorContaining( [&]()
+                                  { analysis.computeConcreteLowerBound( A, bias, lower, upper ); },
+                                  "does not support batch > 1" );
+}
+
+TEST_F( CROWNAnalysisTest, ConcreteBoundsFlattenSpatialDenseFeatures )
+{
+    auto model = ModelBuilder::createMLP( 3, {}, 2, false, false );
+    NLR::CROWNAnalysis analysis( model.get() );
+    auto A = torch::ones( { 2, 1, 3, 2, 2 } );
+    auto bias = torch::zeros( { 2, 1 } );
+    auto lower = torch::ones( { 1, 3, 2, 2 } );
+    auto upper = torch::ones( { 1, 3, 2, 2 } );
+
+    auto concrete = analysis.computeConcreteLowerBound( A, bias, lower, upper );
+
+    EXPECT_TRUE( torch::allclose( concrete, torch::full( { 2 }, 12.0 ) ) );
+}
+
+TEST_F( CROWNAnalysisTest, BackwardRejectsDependencyAndCoefficientCountMismatch )
+{
+    auto node = std::make_shared<BackwardContractNode>( true, 1, true, false );
+    auto model = makeContractModel( node, 2 );
+    NLR::CROWNAnalysis analysis( model.get() );
+
+    expectRuntimeErrorContaining( [&]() { analysis.backwardFrom( 2 ); },
+                                  "dependency/A count mismatch" );
+}
+
+TEST_F( CROWNAnalysisTest, BackwardRejectsNonPerturbedNodeCarryingCoefficients )
+{
+    auto node = std::make_shared<BackwardContractNode>( false, 1, true, false );
+    auto model = makeContractModel( node, 1 );
+    NLR::CROWNAnalysis analysis( model.get() );
+
+    expectRuntimeErrorContaining( [&]() { analysis.backwardFrom( 1 ); },
+                                  "non-perturbed node carries A coefficients" );
+}
+
+TEST_F( CROWNAnalysisTest, BackwardRejectsBiasWithoutCoefficientCarrier )
+{
+    auto node = std::make_shared<BackwardContractNode>( true, 2, false, true );
+    auto model = makeContractModel( node, 2 );
+    NLR::CROWNAnalysis analysis( model.get() );
+
+    expectRuntimeErrorContaining( [&]() { analysis.backwardFrom( 2 ); },
+                                  "bias has no A carrier on dependency 0" );
+}
+
+TEST_F( CROWNAnalysisTest, ConcretizeRejectsFeatureMismatchInsteadOfFallingBackToIBP )
+{
+    auto node = std::make_shared<BackwardContractNode>( true, 1, true, false );
+    auto model = makeContractModel( node, 1 );
+    auto lower = torch::zeros( { 2 } );
+    auto upper = torch::ones( { 2 } );
+    model->setInputBounds( BoundedTensor<torch::Tensor>( lower, upper ) );
+    NLR::CROWNAnalysis analysis( model.get() );
+    analysis.addBound( 0, BoundA( torch::ones( { 2, 1, 3 } ) ),
+                       BoundA( torch::ones( { 2, 1, 3 } ) ) );
+    analysis.addBias( 0, torch::zeros( { 2, 1 } ), torch::zeros( { 2, 1 } ) );
+
+    expectRuntimeErrorContaining( [&]() { analysis.concretizeNode( 1, {} ); },
+                                  "input/A feature mismatch" );
 }

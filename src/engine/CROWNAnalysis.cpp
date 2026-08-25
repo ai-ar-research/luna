@@ -615,25 +615,10 @@ void CROWNAnalysis::backwardFrom( unsigned startIndex, const Vector<unsigned> &u
 
             if ( !node->isPerturbed() )
             {
-                log( Stringf( "backwardFrom() - Skipping non-perturbed node %u (%s)", current,
-                              node->getNodeName().ascii() ) );
-
-                if ( _torchModel->getDependenciesMap().exists( current ) )
-                {
-                    const Vector<unsigned> &deps = _torchModel->getDependencies( current );
-                    for ( unsigned inputIndex : deps )
-                    {
-                        if ( !reachable.exists( inputIndex ) )
-                            continue;
-                        if ( pending.exists( inputIndex ) && pending[inputIndex] > 0 )
-                        {
-                            pending[inputIndex] = pending[inputIndex] - 1;
-                            if ( pending[inputIndex] == 0 )
-                                queue.push( inputIndex );
-                        }
-                    }
-                }
-                continue;
+                throw std::runtime_error(
+                    "CROWNAnalysis::backwardFrom - non-perturbed node carries A coefficients: "
+                    "node=" +
+                    std::to_string( current ) + " name=" + node->getNodeName().ascii() );
             }
 
             stage = "node.boundBackward";
@@ -687,11 +672,27 @@ void CROWNAnalysis::backwardFrom( unsigned startIndex, const Vector<unsigned> &u
             stage = "propagateToDependencies";
             if ( _torchModel->getDependenciesMap().exists( current ) )
             {
-                for ( unsigned i = 0;
-                      i < _torchModel->getDependencies( current ).size() && i < A_matrices.size();
-                      ++i )
+                const auto &dependencies = _torchModel->getDependencies( current );
+                if ( dependencies.size() > 0 && A_matrices.size() != dependencies.size() )
                 {
-                    unsigned inputIndex = _torchModel->getDependencies( current )[i];
+                    throw std::runtime_error(
+                        "CROWNAnalysis::backwardFrom - dependency/A count mismatch: node=" +
+                        std::to_string( current ) +
+                        " dependencies=" + std::to_string( dependencies.size() ) +
+                        " A_matrices=" + std::to_string( A_matrices.size() ) );
+                }
+                if ( dependencies.size() > 0 && ( lbias.defined() || ubias.defined() ) &&
+                     !A_matrices[0].first().defined() && !A_matrices[0].second().defined() )
+                {
+                    throw std::runtime_error(
+                        "CROWNAnalysis::backwardFrom - bias has no A carrier on dependency 0: "
+                        "node=" +
+                        std::to_string( current ) );
+                }
+
+                for ( unsigned i = 0; i < dependencies.size(); ++i )
+                {
+                    unsigned inputIndex = dependencies[i];
 
                     BoundA new_lA = A_matrices[i].first();
                     BoundA new_uA = A_matrices[i].second();
@@ -1122,24 +1123,15 @@ void CROWNAnalysis::concretizeNode( unsigned startIndex, const Vector<unsigned> 
             // intermediate node to the IBP fallback even though ensure3x
             // already normalizes such inputs for the bmm below
             int nodeDim = static_cast<int>( inputLower.numel() );
-            int expectedNodeDim = lA.size( -1 );
+            int expectedNodeDim =
+                lA.dim() > 3 ? static_cast<int>( lA.flatten( 2 ).size( -1 ) ) : lA.size( -1 );
 
             if ( nodeDim != expectedNodeDim )
             {
-                log( Stringf(
-                    "concretizeNode(%u) - Dim mismatch: input=%d, expected=%d; fallback to IBP",
-                    startIndex, nodeDim, expectedNodeDim ) );
-                if ( _ibpBounds.exists( startIndex ) )
-                {
-                    _concreteBounds[startIndex] = _ibpBounds[startIndex];
-                    _torchModel->setConcreteBounds( startIndex, _ibpBounds[startIndex] );
-                    if ( _nodes.exists( startIndex ) )
-                    {
-                        _nodes[startIndex]->setBounds( _ibpBounds[startIndex].lower(),
-                                                       _ibpBounds[startIndex].upper() );
-                    }
-                }
-                return;
+                throw std::runtime_error(
+                    "CROWNAnalysis::concretizeNode - input/A feature mismatch: node=" +
+                    std::to_string( startIndex ) + " input=" + std::to_string( nodeDim ) +
+                    " expected=" + std::to_string( expectedNodeDim ) );
             }
         }
 
@@ -1454,20 +1446,26 @@ static inline torch::Tensor ensure3A( const torch::Tensor &A )
 {
     if ( !A.defined() )
         return A;
-    if ( A.dim() == 3 )
+    torch::Tensor normalizedA = A.dim() > 3 ? A.flatten( 2 ) : A;
+    if ( normalizedA.dim() == 3 )
     {
-        torch::Tensor result;
-        if ( A.size( 1 ) == 1 && A.size( 0 ) > 1 )
+        if ( normalizedA.size( 0 ) > 1 && normalizedA.size( 1 ) > 1 )
         {
-            result = A.transpose( 0, 1 );
+            throw std::runtime_error(
+                "CROWNAnalysis concretization does not support batch > 1 with spec > 1" );
         }
-        else if ( A.size( 0 ) == 1 )
+        torch::Tensor result;
+        if ( normalizedA.size( 1 ) == 1 && normalizedA.size( 0 ) > 1 )
         {
-            result = A;
+            result = normalizedA.transpose( 0, 1 );
+        }
+        else if ( normalizedA.size( 0 ) == 1 )
+        {
+            result = normalizedA;
         }
         else
         {
-            torch::Tensor transposed = A.transpose( 0, 1 );
+            torch::Tensor transposed = normalizedA.transpose( 0, 1 );
             if ( transposed.size( 0 ) > 1 )
             {
                 result = transposed.narrow( 0, 0, 1 );
@@ -1479,11 +1477,11 @@ static inline torch::Tensor ensure3A( const torch::Tensor &A )
         }
         return result;
     }
-    if ( A.dim() == 2 )
-        return A.unsqueeze( 0 );
-    if ( A.dim() == 1 )
-        return A.unsqueeze( 0 ).unsqueeze( 0 );
-    return A.unsqueeze( 0 );
+    if ( normalizedA.dim() == 2 )
+        return normalizedA.unsqueeze( 0 );
+    if ( normalizedA.dim() == 1 )
+        return normalizedA.unsqueeze( 0 ).unsqueeze( 0 );
+    return normalizedA.unsqueeze( 0 );
 }
 static inline torch::Tensor ensure3x( const torch::Tensor &x )
 {
@@ -1499,9 +1497,9 @@ static inline torch::Tensor ensure3x( const torch::Tensor &x )
     }
     if ( x.dim() == 3 )
     {
-        return x;
+        return x.size( -1 ) == 1 ? x : x.flatten().unsqueeze( 0 ).unsqueeze( -1 );
     }
-    return x;
+    return x.flatten( 1 ).unsqueeze( -1 );
 }
 static inline torch::Tensor ensure3b( const torch::Tensor &b )
 {
@@ -1516,7 +1514,8 @@ static inline torch::Tensor ensure3b( const torch::Tensor &b )
     {
         if ( b.size( 1 ) > 1 )
         {
-            return b.select( 1, 0 ).unsqueeze( 0 ).unsqueeze( -1 );
+            throw std::runtime_error(
+                "CROWNAnalysis concretization does not support batched bias with batch > 1" );
         }
         else
         {
