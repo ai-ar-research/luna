@@ -1204,27 +1204,27 @@ void CROWNAnalysis::concretizeNode( unsigned startIndex, const Vector<unsigned> 
             }
         }
 
-        // STE: clamp to reference bounds while preserving gradient flow (auto_LiRPA
-        // bound_general.py:1079-1084)
-        if ( LunaConfiguration::ANALYSIS_METHOD == LunaConfiguration::AnalysisMethod::AlphaCROWN )
+        auto refIt = _referenceBounds.find( startIndex );
+        if ( refIt != _referenceBounds.end() )
         {
-            auto refIt = _referenceBounds.find( startIndex );
-            if ( refIt != _referenceBounds.end() )
-            {
-                const auto &refLower = refIt->second.first;
-                const auto &refUpper = refIt->second.second;
+            const auto &refLower = refIt->second.first;
+            const auto &refUpper = refIt->second.second;
+            const bool retainGradients =
+                LunaConfiguration::ANALYSIS_METHOD == LunaConfiguration::AnalysisMethod::AlphaCROWN;
 
-                if ( refLower.defined() && refLower.sizes() == concreteLower.sizes() )
-                {
-                    concreteLower = torch::max( refLower, concreteLower ).detach() -
-                                    concreteLower.detach() + concreteLower;
-                }
-                if ( refUpper.defined() && refUpper.sizes() == concreteUpper.sizes() )
-                {
-                    concreteUpper =
-                        concreteUpper -
-                        ( concreteUpper.detach() - torch::min( refUpper, concreteUpper ).detach() );
-                }
+            if ( refLower.defined() && refLower.sizes() == concreteLower.sizes() )
+            {
+                torch::Tensor clamped = torch::max( refLower, concreteLower );
+                concreteLower = retainGradients
+                                    ? clamped.detach() - concreteLower.detach() + concreteLower
+                                    : clamped;
+            }
+            if ( refUpper.defined() && refUpper.sizes() == concreteUpper.sizes() )
+            {
+                torch::Tensor clamped = torch::min( refUpper, concreteUpper );
+                concreteUpper = retainGradients
+                                    ? concreteUpper - ( concreteUpper.detach() - clamped.detach() )
+                                    : clamped;
             }
         }
 

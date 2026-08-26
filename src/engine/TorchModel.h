@@ -204,6 +204,7 @@ private:
 
     void validateNodeIndex(unsigned nodeIndex) const;
     void cacheForwardShapesFromCenter();
+    void resetAnalysisState();
 
     torch::Device _device;
 };

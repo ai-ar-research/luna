@@ -657,6 +657,26 @@ BoundedTensor<torch::Tensor> TorchModel::compute_bounds(
 
     log( "[TorchModel] compute_bounds() called - unified analysis entry point" );
 
+    resetAnalysisState();
+
+    const auto &lower = input_bounds.lower();
+    const auto &upper = input_bounds.upper();
+    if ( ( lower.dim() > 1 && lower.size( 0 ) != 1 ) ||
+         ( upper.dim() > 1 && upper.size( 0 ) != 1 ) )
+    {
+        throw std::runtime_error( "TorchModel::compute_bounds requires batch size 1" );
+    }
+
+    for ( const auto &[nodeIndex, bounds] : _persistedIntermediateBounds )
+    {
+        if ( nodeIndex < _nodes.size() && _nodes[nodeIndex] )
+        {
+            _nodes[nodeIndex]->setBounds( bounds.first, bounds.second );
+            setConcreteBounds( nodeIndex,
+                               BoundedTensor<torch::Tensor>( bounds.first, bounds.second ) );
+        }
+    }
+
     setInputBounds( input_bounds );
 
     if ( specification_matrix != nullptr )
@@ -718,20 +738,11 @@ BoundedTensor<torch::Tensor> TorchModel::runCROWN( const BoundedTensor<torch::Te
     std::unique_ptr<CROWNAnalysis> crownAnalysis = std::make_unique<CROWNAnalysis>( this );
 
     crownAnalysis->setInputBounds( inputBounds );
+    if ( hasPersistedIntermediateBounds() )
+        crownAnalysis->setReferenceBounds( getPersistedIntermediateBounds() );
     crownAnalysis->run();
 
     BoundedTensor<torch::Tensor> outputBounds = crownAnalysis->getOutputBounds();
-
-    std::unordered_map<unsigned, std::pair<torch::Tensor, torch::Tensor>> allBounds;
-    for ( unsigned i = 0; i < _nodes.size(); ++i )
-    {
-        if ( crownAnalysis->hasConcreteBounds( i ) )
-        {
-            allBounds[i] = { crownAnalysis->getConcreteLowerBound( i ).detach().clone(),
-                             crownAnalysis->getConcreteUpperBound( i ).detach().clone() };
-        }
-    }
-    persistIntermediateBounds( allBounds );
 
     setFinalAnalysisBounds( outputBounds );
 
@@ -872,18 +883,6 @@ TorchModel::runAlphaCROWN( const BoundedTensor<torch::Tensor> &inputBounds, bool
     }
 
     persistAlphas( alphaCrownAnalysis->extractAlphas() );
-    auto *crown = alphaCrownAnalysis->getCROWNAnalysis();
-    std::unordered_map<unsigned, std::pair<torch::Tensor, torch::Tensor>> allBounds;
-    for ( unsigned i = 0; i < _nodes.size(); ++i )
-    {
-        if ( crown->hasConcreteBounds( i ) )
-        {
-            allBounds[i] = { crown->getConcreteLowerBound( i ).detach().clone(),
-                             crown->getConcreteUpperBound( i ).detach().clone() };
-        }
-    }
-    persistIntermediateBounds( allBounds );
-
     BoundedTensor<torch::Tensor> outputBounds( finalLower, finalUpper );
 
     setFinalAnalysisBounds( outputBounds );
@@ -959,6 +958,21 @@ BoundedTensor<torch::Tensor> TorchModel::getFinalAnalysisBounds() const
 bool TorchModel::hasFinalAnalysisBounds() const
 {
     return _hasFinalAnalysisBounds;
+}
+
+void TorchModel::resetAnalysisState()
+{
+    clearConcreteBounds();
+    _crownBounds.clear();
+    _alphaCrownBounds.clear();
+    _finalAnalysisBounds = BoundedTensor<torch::Tensor>();
+    _hasFinalAnalysisBounds = false;
+    resetProcessingState();
+    for ( auto &node : _nodes )
+    {
+        if ( node )
+            node->clearBounds();
+    }
 }
 
 void TorchModel::validateNodeIndex( unsigned nodeIndex ) const

@@ -46,6 +46,52 @@ TEST_F(BaBStateTest, loadState_setsInputBounds) {
     EXPECT_TRUE(torch::allclose(retrieved.upper(), inputBounds.upper()));
 }
 
+TEST_F( BaBStateTest, computeBoundsRejectsMultiBatchAtPublicBoundary )
+{
+    auto model = ModelBuilder::createMLP( 3, { 5 }, 2, true, false );
+    BoundedTensor<torch::Tensor> inputBounds( torch::zeros( { 2, 3 } ), torch::ones( { 2, 3 } ) );
+    EXPECT_THROW(
+        model->compute_bounds( inputBounds, nullptr, LunaConfiguration::AnalysisMethod::CROWN ),
+        std::runtime_error );
+}
+
+TEST_F( BaBStateTest, computeBoundsClearsNodeBoundsFromPriorInvocation )
+{
+    torch::manual_seed( 123 );
+    auto reused = ModelBuilder::createMLP( 3, { 5 }, 2, true, false );
+    torch::manual_seed( 123 );
+    auto fresh = ModelBuilder::createMLP( 3, { 5 }, 2, true, false );
+    auto narrow = BoundGenerator::epsilonBall( torch::zeros( { 1, 3 } ), 0.01 );
+    auto wide = BoundGenerator::epsilonBall( torch::zeros( { 1, 3 } ), 1.0 );
+    (void)reused->compute_bounds( narrow, nullptr, LunaConfiguration::AnalysisMethod::CROWN );
+    auto reusedResult =
+        reused->compute_bounds( wide, nullptr, LunaConfiguration::AnalysisMethod::CROWN );
+    auto freshResult =
+        fresh->compute_bounds( wide, nullptr, LunaConfiguration::AnalysisMethod::CROWN );
+    EXPECT_TRUE(
+        TensorComparator::allClose( reusedResult.lower(), freshResult.lower(), 1e-5, 1e-5 ) );
+    EXPECT_TRUE(
+        TensorComparator::allClose( reusedResult.upper(), freshResult.upper(), 1e-5, 1e-5 ) );
+}
+
+TEST_F( BaBStateTest, computeBoundsStartsCleanAfterFailedInvocation )
+{
+    auto reused = ModelBuilder::createMLP( 3, { 5 }, 2, true, false );
+    auto narrow = BoundGenerator::epsilonBall( torch::zeros( { 1, 3 } ), 0.01 );
+    BoundedTensor<torch::Tensor> unsupportedBatch( torch::zeros( { 2, 3 } ),
+                                                   torch::ones( { 2, 3 } ) );
+    (void)reused->compute_bounds( narrow, nullptr, LunaConfiguration::AnalysisMethod::CROWN );
+    ASSERT_TRUE( reused->hasFinalAnalysisBounds() );
+    EXPECT_THROW( reused->compute_bounds( unsupportedBatch, nullptr,
+                                          LunaConfiguration::AnalysisMethod::CROWN ),
+                  std::runtime_error );
+    EXPECT_FALSE( reused->hasFinalAnalysisBounds() );
+    for ( unsigned i = 0; i < reused->getNumNodes(); ++i )
+    {
+        EXPECT_FALSE( reused->hasConcreteBounds( i ) );
+    }
+}
+
 TEST_F(BaBStateTest, loadState_persistsIntermediateBounds) {
     auto model = ModelBuilder::createMLP(3, {5}, 2, true, false);
     auto inputBounds = BoundGenerator::epsilonBall(torch::zeros({1, 3}), 0.1);
