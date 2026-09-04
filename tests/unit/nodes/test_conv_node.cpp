@@ -53,6 +53,29 @@ TEST_F( ConvNodeTest, IBPBasic )
     EXPECT_TRUE( torch::all( width >= 0 ).item<bool>() );
 }
 
+TEST_F( ConvNodeTest, IBPContainsPointDespiteMixedSignReductionRounding )
+{
+    torch::manual_seed( 1 );
+    torch::Tensor point = torch::randn( { 1, 64, 3, 3 }, torch::kFloat32 );
+    torch::Tensor weight = torch::randn( { 1, 64, 3, 3 }, torch::kFloat32 );
+
+    torch::nn::Conv2d conv( torch::nn::Conv2dOptions( 64, 1, 3 ).bias( false ) );
+    conv->weight = weight;
+
+    auto node = std::make_shared<BoundedConvNode>( conv, ConvMode::PATCHES, "mixed_sign_conv" );
+    node->setNodeIndex( 0 );
+
+    Vector<BoundedTensor<torch::Tensor>> inputBounds;
+    inputBounds.append( BoundedTensor<torch::Tensor>( point, point ) );
+
+    torch::Tensor activation = torch::nn::functional::conv2d( point.to( torch::kFloat64 ),
+                                                              conv->weight.to( torch::kFloat64 ) );
+    auto bounds = node->computeIntervalBoundPropagation( inputBounds );
+
+    EXPECT_TRUE( torch::all( bounds.lower() <= activation ).item<bool>() );
+    EXPECT_TRUE( torch::all( bounds.upper() >= activation ).item<bool>() );
+}
+
 TEST_F( ConvNodeTest, BackwardRejectsAmbiguousFlatSpatialShape )
 {
     auto lower = torch::zeros( { 60 } );

@@ -15,6 +15,7 @@
 #include <torch/nn/functional.h>
 #include <stdexcept>
 #include <cmath>
+#include <limits>
 
 namespace NLR
 {
@@ -991,79 +992,57 @@ BoundedTensor<torch::Tensor> BoundedConvNode::computeIntervalBoundPropagation(
         input_upper = input_upper.unsqueeze( 0 );
     }
 
-    torch::Tensor weight_pos = torch::clamp_min( weight, 0 );
-    torch::Tensor weight_neg = torch::clamp_max( weight, 0 );
+    // Splitting a mixed-sign convolution into W+ and W- performs two large FP32
+    // reductions and then subtracts them.  Their independent rounding can make
+    // even a point interval miss the real-valued convolution.  Evaluate the
+    // equivalent center-radius form in FP64, then round the result outward to
+    // Luna's FP32 bound representation.
+    torch::Tensor input_lower_64 = input_lower.to( torch::kFloat64 );
+    torch::Tensor input_upper_64 = input_upper.to( torch::kFloat64 );
+    torch::Tensor weight_64 = weight.to( torch::kFloat64 );
+    torch::Tensor center = ( input_lower_64 + input_upper_64 ) / 2.0;
+    torch::Tensor radius = torch::max( input_upper_64 - center, center - input_lower_64 );
+    radius = torch::nextafter(
+        radius, torch::full_like( radius, std::numeric_limits<double>::infinity() ) );
 
-    torch::Tensor lower_bound, upper_bound;
+    torch::Tensor center_bound, radius_bound;
 
     if ( conv_dim == 1 )
     {
-        lower_bound = torch::nn::functional::conv1d( input_lower, weight_pos,
-                                                     torch::nn::functional::Conv1dFuncOptions()
-                                                         .stride( stride_64 )
-                                                         .padding( padding_64 )
-                                                         .dilation( dilation_64 )
-                                                         .groups( groups ) ) +
-                      torch::nn::functional::conv1d( input_upper, weight_neg,
-                                                     torch::nn::functional::Conv1dFuncOptions()
-                                                         .stride( stride_64 )
-                                                         .padding( padding_64 )
-                                                         .dilation( dilation_64 )
-                                                         .groups( groups ) );
-
-        upper_bound = torch::nn::functional::conv1d( input_upper, weight_pos,
-                                                     torch::nn::functional::Conv1dFuncOptions()
-                                                         .stride( stride_64 )
-                                                         .padding( padding_64 )
-                                                         .dilation( dilation_64 )
-                                                         .groups( groups ) ) +
-                      torch::nn::functional::conv1d( input_lower, weight_neg,
-                                                     torch::nn::functional::Conv1dFuncOptions()
-                                                         .stride( stride_64 )
-                                                         .padding( padding_64 )
-                                                         .dilation( dilation_64 )
-                                                         .groups( groups ) );
-
-        if ( has_bias && bias.defined() )
-        {
-            lower_bound = lower_bound + bias.unsqueeze( 0 ).unsqueeze( -1 );
-            upper_bound = upper_bound + bias.unsqueeze( 0 ).unsqueeze( -1 );
-        }
+        auto options = torch::nn::functional::Conv1dFuncOptions()
+                           .stride( stride_64 )
+                           .padding( padding_64 )
+                           .dilation( dilation_64 )
+                           .groups( groups );
+        center_bound = torch::nn::functional::conv1d( center, weight_64, options );
+        radius_bound = torch::nn::functional::conv1d( radius, weight_64.abs(), options );
     }
     else
     {
-        lower_bound = torch::nn::functional::conv2d( input_lower, weight_pos,
-                                                     torch::nn::functional::Conv2dFuncOptions()
-                                                         .stride( stride_64 )
-                                                         .padding( padding_64 )
-                                                         .dilation( dilation_64 )
-                                                         .groups( groups ) ) +
-                      torch::nn::functional::conv2d( input_upper, weight_neg,
-                                                     torch::nn::functional::Conv2dFuncOptions()
-                                                         .stride( stride_64 )
-                                                         .padding( padding_64 )
-                                                         .dilation( dilation_64 )
-                                                         .groups( groups ) );
-
-        upper_bound = torch::nn::functional::conv2d( input_upper, weight_pos,
-                                                     torch::nn::functional::Conv2dFuncOptions()
-                                                         .stride( stride_64 )
-                                                         .padding( padding_64 )
-                                                         .dilation( dilation_64 )
-                                                         .groups( groups ) ) +
-                      torch::nn::functional::conv2d( input_lower, weight_neg,
-                                                     torch::nn::functional::Conv2dFuncOptions()
-                                                         .stride( stride_64 )
-                                                         .padding( padding_64 )
-                                                         .dilation( dilation_64 )
-                                                         .groups( groups ) );
-
-        if ( has_bias && bias.defined() )
-        {
-            lower_bound = lower_bound + bias.unsqueeze( 0 ).unsqueeze( -1 ).unsqueeze( -1 );
-            upper_bound = upper_bound + bias.unsqueeze( 0 ).unsqueeze( -1 ).unsqueeze( -1 );
-        }
+        auto options = torch::nn::functional::Conv2dFuncOptions()
+                           .stride( stride_64 )
+                           .padding( padding_64 )
+                           .dilation( dilation_64 )
+                           .groups( groups );
+        center_bound = torch::nn::functional::conv2d( center, weight_64, options );
+        radius_bound = torch::nn::functional::conv2d( radius, weight_64.abs(), options );
     }
+
+    if ( has_bias && bias.defined() )
+    {
+        std::vector<int64_t> bias_shape( center_bound.dim(), 1 );
+        bias_shape[1] = bias.numel();
+        center_bound = center_bound + bias.to( torch::kFloat64 ).view( bias_shape );
+    }
+
+    torch::Tensor lower_bound_64 = center_bound - radius_bound;
+    torch::Tensor upper_bound_64 = center_bound + radius_bound;
+    torch::Tensor lower_bound = lower_bound_64.to( torch::kFloat32 );
+    torch::Tensor upper_bound = upper_bound_64.to( torch::kFloat32 );
+    lower_bound = torch::nextafter(
+        lower_bound, torch::full_like( lower_bound, -std::numeric_limits<float>::infinity() ) );
+    upper_bound = torch::nextafter(
+        upper_bound, torch::full_like( upper_bound, std::numeric_limits<float>::infinity() ) );
 
     if ( input.lower().dim() == 1 || ( input.lower().dim() == 2 && input.lower().size( 0 ) == 1 ) )
     {
