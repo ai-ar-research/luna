@@ -20,6 +20,7 @@
 #include "LunaError.h"
 #include "TimeUtils.h"
 
+#include <limits>
 #include <vector>
 #include <sstream>
 
@@ -1055,7 +1056,10 @@ void CROWNAnalysis::concretizeNode( unsigned startIndex, const Vector<unsigned> 
             torch::Tensor xU_img = inputUpper.reshape( in_shape ).to( torch::kFloat32 );
 
             torch::Tensor center = ( xU_img + xL_img ) / 2.0f;
-            torch::Tensor diff = ( xU_img - xL_img ) / 2.0f;
+            torch::Tensor diff = torch::max( xU_img - center, center - xL_img );
+            // Enclose both FP32 endpoints despite midpoint rounding
+            diff = torch::nextafter(
+                diff, torch::full_like( diff, std::numeric_limits<float>::infinity() ) );
 
             torch::Tensor bound = patches_ptr->matmul( center );
             torch::Tensor bound_diff = patches_ptr->matmul( diff, /*patch_abs=*/true );

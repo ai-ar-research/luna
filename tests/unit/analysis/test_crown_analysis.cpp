@@ -320,6 +320,27 @@ TEST_F( CROWNAnalysisTest, ConcreteBoundsFlattenSpatialDenseFeatures )
     EXPECT_TRUE( torch::allclose( concrete, torch::full( { 2 }, 12.0 ) ) );
 }
 
+TEST_F( CROWNAnalysisTest, PatchesConcretizationContainsOriginalFloatEndpoints )
+{
+    auto model = ModelBuilder::createMLP( 1, {}, 1, false, false );
+    auto lower = torch::tensor( { -1.0077401399612427f }, torch::kFloat32 );
+    auto upper = torch::tensor( { -0.9999401569366455f }, torch::kFloat32 );
+    model->setInputBounds( BoundedTensor<torch::Tensor>( lower, upper ) );
+
+    NLR::CROWNAnalysis analysis( model.get() );
+    auto patches = std::make_shared<Patches>(
+        torch::ones( { 1, 1, 1, 1, 1, 1, 1 }, torch::kFloat32 ), std::vector<int64_t>{ 1, 1 },
+        std::vector<int64_t>{ 0, 0, 0, 0 }, std::vector<int64_t>{ 0, 0, 0, 0 }, 0, std::nullopt,
+        std::vector<int64_t>{ 1, 1, 1, 1 }, std::vector<int64_t>{ 1, 1, 1, 1 } );
+    analysis.addBound( 0, BoundA( patches ), BoundA( patches ) );
+    analysis.addBias( 0, torch::zeros( { 1, 1 } ), torch::zeros( { 1, 1 } ) );
+
+    analysis.concretizeNode( 1 );
+
+    EXPECT_LE( analysis.getConcreteLowerBound( 1 ).item<float>(), lower.item<float>() );
+    EXPECT_GE( analysis.getConcreteUpperBound( 1 ).item<float>(), upper.item<float>() );
+}
+
 TEST_F( CROWNAnalysisTest, BackwardRejectsDependencyAndCoefficientCountMismatch )
 {
     auto node = std::make_shared<BackwardContractNode>( true, 1, true, false );
