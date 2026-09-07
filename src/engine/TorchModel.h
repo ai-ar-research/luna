@@ -104,6 +104,7 @@ public:
 
     BoundedTensor<torch::Tensor> runCROWN();
     BoundedTensor<torch::Tensor> runCROWN(const BoundedTensor<torch::Tensor>& inputBounds);
+    BoundedTensor<torch::Tensor> runIBP(const BoundedTensor<torch::Tensor>& inputBounds);
 
     BoundedTensor<torch::Tensor> runAlphaCROWN(bool optimizeLower = true, bool optimizeUpper = false);
     BoundedTensor<torch::Tensor> runAlphaCROWN(const BoundedTensor<torch::Tensor>& inputBounds,

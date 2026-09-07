@@ -750,6 +750,27 @@ BoundedTensor<torch::Tensor> TorchModel::runCROWN( const BoundedTensor<torch::Te
     return outputBounds;
 }
 
+BoundedTensor<torch::Tensor> TorchModel::runIBP(
+    const BoundedTensor<torch::Tensor> &inputBounds )
+{
+    setInputBounds( inputBounds );
+    cacheForwardShapesFromCenter();
+
+    std::unique_ptr<CROWNAnalysis> crownAnalysis = std::make_unique<CROWNAnalysis>( this );
+    crownAnalysis->setInputBounds( inputBounds );
+    crownAnalysis->computeIBPBounds();
+
+    for ( unsigned nodeIndex : getAllNodeIndices() )
+    {
+        if ( crownAnalysis->hasIBPBounds( nodeIndex ) )
+        {
+            setConcreteBounds( nodeIndex, crownAnalysis->getNodeIBPBounds( nodeIndex ) );
+        }
+    }
+
+    return crownAnalysis->getOutputIBPBounds();
+}
+
 void TorchModel::cacheForwardShapesFromCenter()
 {
     if ( !hasInputBounds() )

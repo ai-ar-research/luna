@@ -37,5 +37,6 @@ add_integration_executable(TestResidualCrownSoundness TestResidualCrownSoundness
 
 # System test executables
 luna_add_test(test_crown_pipeline test_crown_pipeline.cpp "integration" "system")
+luna_add_test(test_ibp_pipeline test_ibp_pipeline.cpp "integration" "system")
 luna_add_test(test_alpha_crown_pipeline test_alpha_crown_pipeline.cpp "integration" "system")
 luna_add_test(test_onnx_vnnlib_pipeline test_onnx_vnnlib_pipeline.cpp "integration" "system")
