@@ -757,6 +757,17 @@ BoundedTensor<torch::Tensor> TorchModel::runIBP(
     cacheForwardShapesFromCenter();
 
     std::unique_ptr<CROWNAnalysis> crownAnalysis = std::make_unique<CROWNAnalysis>( this );
+    crownAnalysis->clearAllNodeBounds();
+    crownAnalysis->clearConcreteBounds();
+    for ( const auto &[nodeIndex, bounds] : _persistedIntermediateBounds )
+    {
+        if ( nodeIndex < _nodes.size() && _nodes[nodeIndex] )
+        {
+            _nodes[nodeIndex]->setBounds( bounds.first, bounds.second );
+            setConcreteBounds( nodeIndex,
+                               BoundedTensor<torch::Tensor>( bounds.first, bounds.second ) );
+        }
+    }
     crownAnalysis->setInputBounds( inputBounds );
     crownAnalysis->computeIBPBounds();
 

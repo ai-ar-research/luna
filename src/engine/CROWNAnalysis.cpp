@@ -245,6 +245,13 @@ void CROWNAnalysis::computeIBPBounds()
         BoundedTensor<torch::Tensor> ibpBounds =
             node->computeIntervalBoundPropagation( inputBounds );
 
+        if ( node->hasBounds() )
+        {
+            ibpBounds = BoundedTensor<torch::Tensor>(
+                torch::maximum( ibpBounds.lower(), node->getLower() ),
+                torch::minimum( ibpBounds.upper(), node->getUpper() ) );
+        }
+
         // Detach to prevent gradient history leaking across iterations
         _ibpBounds[nodeIndex] =
             BoundedTensor<torch::Tensor>( ibpBounds.lower().detach(), ibpBounds.upper().detach() );
@@ -1397,11 +1404,15 @@ Vector<BoundedTensor<torch::Tensor>> CROWNAnalysis::getInputBoundsForNode( unsig
             }
             else
             {
-                // Priority: node bounds > CROWN concrete > IBP > default
                 if ( node->hasBounds() )
                 {
                     lower = node->getLower();
                     upper = node->getUpper();
+                    if ( _ibpBounds.exists( inputIndex ) )
+                    {
+                        lower = torch::maximum( lower, _ibpBounds[inputIndex].lower() );
+                        upper = torch::minimum( upper, _ibpBounds[inputIndex].upper() );
+                    }
                     source = "node";
                 }
                 else if ( LunaConfiguration::USE_STANDARD_CROWN &&
