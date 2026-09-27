@@ -13,9 +13,11 @@
 #include "conv/MatrixConvolution.h"
 #include "conv/Patches.h"
 #include <torch/nn/functional.h>
+#include <algorithm>
 #include <stdexcept>
 #include <cmath>
 #include <limits>
+#include <sstream>
 
 namespace NLR
 {
@@ -466,6 +468,30 @@ BoundA BoundedConvNode::boundOneSide( const BoundA &last_A, const torch::Tensor 
         torch::Tensor last_A_tensor = last_A.asTensor();
 
         std::vector<int> output_padding = computeOutputPadding( input_shape, output_shape, weight );
+
+        // Catch invalid inferred padding before LibTorch reports a shape error
+        if ( conv_dim == 2 && output_padding.size() == 2 &&
+             ( output_padding[0] >= std::max( stride[0], dilation[0] ) ||
+               output_padding[1] >= std::max( stride[1], dilation[1] ) ) )
+        {
+            std::ostringstream message;
+            message << "BoundedConvNode " << _nodeName.ascii() << " computed invalid output_padding=["
+                    << output_padding[0] << "," << output_padding[1] << "] input_shape=[";
+            for ( std::size_t i = 0; i < input_shape.size(); ++i )
+            {
+                message << ( i ? "," : "" ) << input_shape[i];
+            }
+            message << "] output_shape=[";
+            for ( std::size_t i = 0; i < output_shape.size(); ++i )
+            {
+                message << ( i ? "," : "" ) << output_shape[i];
+            }
+            message << "] kernel=[" << weight.size( 2 ) << "," << weight.size( 3 )
+                    << "] stride=[" << stride[0] << "," << stride[1] << "] padding=["
+                    << padding[0] << "," << padding[1] << "] dilation=[" << dilation[0] << ","
+                    << dilation[1] << "]";
+            throw std::runtime_error( message.str() );
+        }
 
         auto shape = last_A_tensor.sizes().vec();
 

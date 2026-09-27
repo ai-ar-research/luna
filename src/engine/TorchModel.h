@@ -38,9 +38,56 @@ class AlphaCROWNAnalysis;
 
 #include <torch/torch.h>
 #include <memory>
+#include <string>
 #include <unordered_map>
+#include <vector>
 
 namespace NLR {
+
+/// \brief Mathematical operation kinds accepted by the tensor graph interface.
+enum class TorchGraphOperation { Input, Relu, Add, Flatten, Linear, Conv2d, BatchNorm, Unsupported };
+
+/// \brief One operation in a topologically ordered tensor computation graph.
+struct TorchGraphNode {
+    /// \brief Stable graph-local node index.
+    unsigned index = 0;
+    /// \brief Stable source tensor name used to map bounds back to the caller.
+    std::string name;
+    /// \brief Operation described without ONNX or Luna node types.
+    TorchGraphOperation operation = TorchGraphOperation::Unsupported;
+    /// \brief Indices of dynamic input nodes, in operation input order.
+    std::vector<unsigned> inputs;
+    /// \brief Per-sample output shape, excluding the batch dimension.
+    std::vector<int64_t> shape;
+    /// \brief Optional constant operand used by operations such as Add.
+    torch::Tensor constant;
+    /// \brief Weights for Linear and Conv2d operations.
+    torch::Tensor weight;
+    /// \brief Optional bias for Linear and Conv2d operations.
+    torch::Tensor bias;
+    /// \brief Batch-normalization scale, offset, mean, and variance.
+    torch::Tensor scale;
+    torch::Tensor offset;
+    torch::Tensor mean;
+    torch::Tensor variance;
+    /// \brief Convolution stride, symmetric padding, dilation, and groups.
+    std::vector<int64_t> strides;
+    std::vector<int64_t> padding;
+    std::vector<int64_t> dilations;
+    int64_t groups = 1;
+    /// \brief Flatten axis or batch-normalization epsilon.
+    int64_t axis = 1;
+    double epsilon = 1.0e-5;
+    /// \brief ONNX operation name for an explicit unsupported-operation error.
+    std::string unsupported_operation;
+};
+
+/// \brief Operation-neutral graph passed from an embedding verifier to Luna.
+struct TorchComputationGraph {
+    std::vector<TorchGraphNode> nodes;
+    unsigned input_index = 0;
+    unsigned output_index = 0;
+};
 
 class TorchModel {
 public:
@@ -48,6 +95,9 @@ public:
                const Vector<unsigned>& inputIndices,
                unsigned outputIndex,
                const Map<unsigned, Vector<unsigned>>& dependencies);
+
+    /// \brief Create a Luna model from an operation-neutral tensor graph.
+    static std::shared_ptr<TorchModel> fromGraph(const TorchComputationGraph& graph);
 
     TorchModel(const String& onnxPath);
 

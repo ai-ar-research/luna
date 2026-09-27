@@ -32,6 +32,8 @@ target_include_directories(${LUNA_LIB} PUBLIC
 # they delegate to OnnxToTorchParser::parse and would otherwise force
 # the onnx protobuf symbols into LUNACore. The class declaration stays
 # in TorchModel.h (shipped with LUNACore); only the ctor bodies move.
-target_sources(${LUNA_ONNX_PARSER_LIB} PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/TorchModelOnnxFactory.cpp
-)
+if(LUNA_BUILD_ONNX_PARSER)
+    target_sources(${LUNA_ONNX_PARSER_LIB} PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/TorchModelOnnxFactory.cpp
+    )
+endif()

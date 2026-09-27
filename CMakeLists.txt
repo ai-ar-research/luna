@@ -107,11 +107,13 @@ else()
 endif()
 
 list(APPEND LIBS ${LUNA_PROTOBUF_TARGET})
+option(LUNA_BUILD_ONNX_PARSER "Build Luna's standalone ONNX parser" ON)
 
 ##########
 ## ONNX ##
 ##########
 
+if(LUNA_BUILD_ONNX_PARSER)
 set(ONNX_VERSION ${LUNA_ONNX_VERSION})
 set(ONNX_PROTO_DIR "${CMAKE_BINARY_DIR}/onnx-${ONNX_VERSION}")
 file(MAKE_DIRECTORY ${ONNX_PROTO_DIR})
@@ -157,6 +159,7 @@ add_custom_command(
 )
 
 set(DEPS_ONNX "${ONNX_PROTO_DIR}/onnx.proto3.pb.cc")
+endif()
 
 #############
 ## PyTorch ##
@@ -299,11 +302,13 @@ target_compile_options(${LUNA_LIB} PRIVATE ${RELEASE_FLAGS})
 # Optional ONNX parser. Holds the generated ONNX protobuf TU plus the
 # path-based TorchModel ctors that delegate into it. Depends on LUNACore
 # one-way (parser needs TorchModel types; core never reaches back).
-add_library(${LUNA_ONNX_PARSER_LIB} ${DEPS_ONNX})
-add_library(luna::onnx_parser ALIAS ${LUNA_ONNX_PARSER_LIB})
-target_link_libraries(${LUNA_ONNX_PARSER_LIB} PUBLIC ${LUNA_LIB} ${LUNA_PROTOBUF_TARGET})
-target_include_directories(${LUNA_ONNX_PARSER_LIB} SYSTEM PUBLIC ${ONNX_PROTO_DIR})
-target_compile_options(${LUNA_ONNX_PARSER_LIB} PRIVATE ${RELEASE_FLAGS})
+if(LUNA_BUILD_ONNX_PARSER)
+  add_library(${LUNA_ONNX_PARSER_LIB} ${DEPS_ONNX})
+  add_library(luna::onnx_parser ALIAS ${LUNA_ONNX_PARSER_LIB})
+  target_link_libraries(${LUNA_ONNX_PARSER_LIB} PUBLIC ${LUNA_LIB} ${LUNA_PROTOBUF_TARGET})
+  target_include_directories(${LUNA_ONNX_PARSER_LIB} SYSTEM PUBLIC ${ONNX_PROTO_DIR})
+  target_compile_options(${LUNA_ONNX_PARSER_LIB} PRIVATE ${RELEASE_FLAGS})
+endif()
 
 # Add subdirectories - each populates LUNACore and/or LUNAOnnxParser via target_sources()
 add_subdirectory(src/common)
@@ -311,7 +316,7 @@ add_subdirectory(src/engine)
 add_subdirectory(src/input_parsers)
 add_subdirectory(src/configuration)
 
-if(LUNA_BUILD_EXECUTABLE)
+if(LUNA_BUILD_EXECUTABLE AND LUNA_BUILD_ONNX_PARSER)
     add_executable(luna src/main.cpp src/engine/LunaMain.cpp)
     target_link_libraries(luna ${LUNA_ONNX_PARSER_LIB} ${LUNA_LIB} ${LIBS})
     target_include_directories(luna PRIVATE

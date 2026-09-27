@@ -14,11 +14,240 @@
 #include "AlphaCROWNAnalysis.h"
 #include "LunaError.h"
 #include "LunaConfiguration.h"
+#include "nodes/BoundedAddNode.h"
+#include "nodes/BoundedBatchNormNode.h"
+#include "nodes/BoundedConvNode.h"
+#include "nodes/BoundedFlattenNode.h"
+#include "nodes/BoundedInputNode.h"
+#include "nodes/BoundedLinearNode.h"
+#include "nodes/BoundedReLUNode.h"
+#include "input_parsers/Operations.h"
 #include "OutputConstraint.h"
 #include <iostream>
+#include <limits>
 
 namespace NLR
 {
+
+std::shared_ptr<TorchModel> TorchModel::fromGraph( const TorchComputationGraph &graph )
+{
+    if ( graph.nodes.empty() || graph.input_index >= graph.nodes.size() ||
+         graph.output_index >= graph.nodes.size() )
+    {
+        throw std::invalid_argument( "TorchModel::fromGraph received invalid input/output indices" );
+    }
+
+    auto elementCount = []( const std::vector<int64_t> &shape ) -> unsigned
+    {
+        int64_t count = 1;
+        for ( const auto dimension : shape )
+        {
+            if ( dimension <= 0 || dimension > std::numeric_limits<int>::max() ||
+                 count > std::numeric_limits<unsigned>::max() / dimension )
+            {
+                throw std::invalid_argument( "TorchModel::fromGraph received invalid tensor shape" );
+            }
+            count *= dimension;
+        }
+        return static_cast<unsigned>( count );
+    };
+
+    auto integerShape = []( const std::vector<int64_t> &shape )
+    {
+        std::vector<int> converted;
+        converted.reserve( shape.size() );
+        for ( const auto dimension : shape )
+        {
+            if ( dimension <= 0 || dimension > std::numeric_limits<int>::max() )
+            {
+                throw std::invalid_argument( "TorchModel::fromGraph received invalid node dimensions" );
+            }
+            converted.push_back( static_cast<int>( dimension ) );
+        }
+        return converted;
+    };
+
+    // Convolution shape arithmetic expects NCHW dimensions
+    // The graph interface carries per-sample shapes
+    // Luna currently verifies one sample at a time
+    auto batchedIntegerShape = [&]( const std::vector<int64_t> &shape )
+    {
+        auto converted = integerShape( shape );
+        converted.insert( converted.begin(), 1 );
+        return converted;
+    };
+
+    Vector<std::shared_ptr<BoundedTorchNode>> nodes;
+    Vector<unsigned> inputIndices;
+    Map<unsigned, Vector<unsigned>> dependencies;
+    // Earlier indices are already constructed and can supply operation dimensions
+    for ( unsigned i = 0; i < graph.nodes.size(); ++i )
+    {
+        const auto &description = graph.nodes[i];
+        if ( description.index != i )
+        {
+            throw std::invalid_argument( "TorchModel::fromGraph requires dense topological node indices" );
+        }
+        for ( const auto source : description.inputs )
+        {
+            if ( source >= i )
+            {
+                throw std::invalid_argument( "TorchModel::fromGraph graph is not topologically ordered" );
+            }
+        }
+
+        std::shared_ptr<BoundedTorchNode> node;
+        switch ( description.operation )
+        {
+            case TorchGraphOperation::Input:
+                if ( i != graph.input_index || !description.inputs.empty() )
+                {
+                    throw std::invalid_argument( "TorchModel::fromGraph found an invalid input node" );
+                }
+                node = std::make_shared<BoundedInputNode>( i,
+                                                           elementCount( description.shape ),
+                                                           description.name );
+                inputIndices.append( i );
+                break;
+            case TorchGraphOperation::Relu:
+            {
+                auto module = torch::nn::ReLU( torch::nn::ReLUOptions().inplace( false ) );
+                node = std::make_shared<BoundedReLUNode>( module, description.name );
+                node->setInputSize( elementCount( description.shape ) );
+                node->setOutputSize( elementCount( description.shape ) );
+                break;
+            }
+            case TorchGraphOperation::Add:
+            {
+                auto add = std::make_shared<BoundedAddNode>();
+                if ( description.constant.defined() )
+                {
+                    // Constants are stored on the node rather than as graph edges
+                    if ( description.inputs.size() != 1 )
+                    {
+                        throw std::invalid_argument( "TorchModel::fromGraph Add constant needs one input" );
+                    }
+                    add->setConstantValue( description.constant );
+                    add->setInputSize( nodes[description.inputs[0]]->getOutputSize() );
+                }
+                else
+                {
+                    if ( description.inputs.size() != 2 )
+                    {
+                        throw std::invalid_argument( "TorchModel::fromGraph Add needs two dynamic inputs" );
+                    }
+                    add->setInputSize( nodes[description.inputs[0]]->getOutputSize() );
+                }
+                add->setOutputSize( elementCount( description.shape ) );
+                node = std::move( add );
+                break;
+            }
+            case TorchGraphOperation::Flatten:
+            {
+                Operations::FlattenWrapper flatten( description.axis );
+                auto flat = std::make_shared<BoundedFlattenNode>( flatten );
+                if ( description.inputs.size() != 1 )
+                {
+                    throw std::invalid_argument( "TorchModel::fromGraph Flatten needs one input" );
+                }
+                flat->setInputSize( nodes[description.inputs[0]]->getOutputSize() );
+                flat->setOutputSize( elementCount( description.shape ) );
+                node = std::move( flat );
+                break;
+            }
+            case TorchGraphOperation::Linear:
+            {
+                if ( !description.weight.defined() || description.weight.dim() != 2 )
+                {
+                    throw std::invalid_argument( "TorchModel::fromGraph Linear requires rank-two weights" );
+                }
+                const auto weight = description.weight.contiguous().to( torch::kFloat32 );
+                const bool hasBias = description.bias.defined();
+                auto linear = torch::nn::Linear( torch::nn::LinearOptions( weight.size( 1 ),
+                                                                          weight.size( 0 ) )
+                                                     .bias( hasBias ) );
+                linear->weight = weight;
+                if ( hasBias )
+                {
+                    linear->bias = description.bias.contiguous().to( torch::kFloat32 );
+                }
+                node = std::make_shared<BoundedLinearNode>( linear, 1.0f, description.name );
+                break;
+            }
+            case TorchGraphOperation::Conv2d:
+            {
+                if ( !description.weight.defined() || description.weight.dim() != 4 ||
+                     description.strides.size() != 2 || description.padding.size() != 2 ||
+                     description.dilations.size() != 2 )
+                {
+                    throw std::invalid_argument( "TorchModel::fromGraph Conv2d has invalid parameters" );
+                }
+                const auto weight = description.weight.contiguous().to( torch::kFloat32 );
+                auto options = torch::nn::Conv2dOptions( weight.size( 1 ) * description.groups,
+                                                         weight.size( 0 ),
+                                                         { weight.size( 2 ), weight.size( 3 ) } );
+                options.stride( description.strides )
+                    .padding( description.padding )
+                    .dilation( description.dilations )
+                    .groups( description.groups )
+                    .bias( description.bias.defined() );
+                auto conv = torch::nn::Conv2d( options );
+                conv->weight = weight;
+                if ( description.bias.defined() )
+                {
+                    conv->bias = description.bias.contiguous().to( torch::kFloat32 );
+                }
+                auto bounded = std::make_shared<BoundedConvNode>( conv,
+                                                                  ConvMode::MATRIX,
+                                                                  description.name );
+                if ( description.inputs.size() != 1 )
+                {
+                    throw std::invalid_argument( "TorchModel::fromGraph Conv2d needs one input" );
+                }
+                bounded->setInputShape(
+                    batchedIntegerShape( graph.nodes[description.inputs[0]].shape ) );
+                bounded->setOutputShape( batchedIntegerShape( description.shape ) );
+                bounded->setInputSize( elementCount( graph.nodes[description.inputs[0]].shape ) );
+                bounded->setOutputSize( elementCount( description.shape ) );
+                node = std::move( bounded );
+                break;
+            }
+            case TorchGraphOperation::BatchNorm:
+            {
+                if ( !description.scale.defined() || !description.offset.defined() ||
+                     !description.mean.defined() || !description.variance.defined() ||
+                     description.inputs.size() != 1 )
+                {
+                    throw std::invalid_argument( "TorchModel::fromGraph BatchNorm has invalid parameters" );
+                }
+                auto batchNorm = std::make_shared<BoundedBatchNormNode>(
+                    description.scale, description.offset, description.mean,
+                    description.variance, description.epsilon, description.name );
+                batchNorm->setInputSize( nodes[description.inputs[0]]->getOutputSize() );
+                batchNorm->setOutputSize( elementCount( description.shape ) );
+                node = std::move( batchNorm );
+                break;
+            }
+            case TorchGraphOperation::Unsupported:
+                throw std::runtime_error( "Luna cannot mathematically bound ONNX operation '" +
+                                          description.unsupported_operation + "' at node '" +
+                                          description.name + "'" );
+            default:
+                throw std::runtime_error( "TorchModel::fromGraph received an unknown operation kind" );
+        }
+
+        // Only dynamic tensor inputs appear in the dependency graph
+        for ( const auto source : description.inputs )
+        {
+            dependencies[i].append( source );
+        }
+        node->setNodeIndex( i );
+        node->setNodeName( description.name );
+        nodes.append( std::move( node ) );
+    }
+
+    return std::make_shared<TorchModel>( nodes, inputIndices, graph.output_index, dependencies );
+}
 
 TorchModel::TorchModel( const Vector<std::shared_ptr<BoundedTorchNode>> &nodes,
                         const Vector<unsigned> &inputIndices, unsigned outputIndex,
