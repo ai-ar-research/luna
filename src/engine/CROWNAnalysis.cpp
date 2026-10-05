@@ -217,6 +217,8 @@ void CROWNAnalysis::computeIBPBounds()
 {
     resetProcessingState();
     Vector<unsigned> forwardOrder = _torchModel->topologicalSort();
+    std::size_t recomputedNodes = 0;
+    std::size_t reusedNodes = 0;
 
     log( Stringf( "computeIBPBounds() - Processing %u nodes", forwardOrder.size() ) );
 
@@ -228,6 +230,21 @@ void CROWNAnalysis::computeIBPBounds()
         markProcessed( nodeIndex );
 
         auto &node = _nodes[nodeIndex];
+
+        // Fixed intermediates never read recomputed IBP, so seeded bounds stand even when dirty
+        const bool reuseSeededBounds = !LunaConfiguration::RECOMPUTE_INTERMEDIATE_BOUNDS ||
+                                       !_torchModel->isIncrementalNodeDirty( nodeIndex );
+        if ( node->hasBounds() && reuseSeededBounds )
+        {
+            BoundedTensor<torch::Tensor> cachedBounds( node->getLower().detach(),
+                                                       node->getUpper().detach() );
+            _ibpBounds[nodeIndex] = cachedBounds;
+            _concreteBounds[nodeIndex] = cachedBounds;
+            _torchModel->setConcreteBounds( nodeIndex, cachedBounds );
+            ++reusedNodes;
+            continue;
+        }
+        ++recomputedNodes;
 
         Vector<BoundedTensor<torch::Tensor>> inputBounds = getInputBoundsForNode( nodeIndex );
 
@@ -247,6 +264,19 @@ void CROWNAnalysis::computeIBPBounds()
 
         if ( node->hasBounds() )
         {
+            // Specification bounds at the output can have one row per property
+            // clause rather than one entry per raw network output. They are not
+            // neuron intervals, so keep the forward IBP result in that case.
+            if ( nodeIndex == getOutputIndex() &&
+                 ( ibpBounds.lower().sizes() != node->getLower().sizes() ||
+                   ibpBounds.upper().sizes() != node->getUpper().sizes() ) )
+            {
+                node->clearBounds();
+            }
+        }
+
+        if ( node->hasBounds() )
+        {
             ibpBounds = BoundedTensor<torch::Tensor>(
                 torch::maximum( ibpBounds.lower(), node->getLower() ),
                 torch::minimum( ibpBounds.upper(), node->getUpper() ) );
@@ -259,6 +289,7 @@ void CROWNAnalysis::computeIBPBounds()
 
     log( Stringf( "computeIBPBounds() - Completed, stored bounds for %u nodes",
                   _ibpBounds.size() ) );
+    _torchModel->setForwardBoundWorkStats( recomputedNodes, reusedNodes );
 }
 
 bool CROWNAnalysis::getAlphaStartCacheInfo( const std::string &key,

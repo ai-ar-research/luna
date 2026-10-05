@@ -40,6 +40,7 @@ class AlphaCROWNAnalysis;
 #include <memory>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace NLR {
@@ -196,6 +197,16 @@ public:
         std::unordered_map<std::string, AlphaParameters>>& getPersistedAlphas() const;
     const std::unordered_map<unsigned,
         std::pair<torch::Tensor, torch::Tensor>>& getPersistedIntermediateBounds() const;
+    struct ForwardBoundWorkStats {
+        std::size_t recomputedNodes{0};
+        std::size_t reusedNodes{0};
+    };
+    void setDirtyNodeIndices(const std::vector<unsigned>& nodeIndices);
+    bool isIncrementalNodeDirty(unsigned nodeIndex) const;
+    void setForwardBoundWorkStats(std::size_t recomputed, std::size_t reused);
+    const ForwardBoundWorkStats& getForwardBoundWorkStats() const;
+    // Center forward passes actually run, since repeated input boxes reuse the cached shapes
+    std::size_t getShapeCachePassCount() const;
     void clearPersistedState();
 
     const Map<unsigned, Vector<unsigned>>& getDependenciesMap() const { return _dependencies; }
@@ -252,6 +263,11 @@ private:
     std::unordered_map<unsigned,
         std::pair<torch::Tensor, torch::Tensor>> _persistedIntermediateBounds;
     bool _hasPersistedIntermediateBounds{false};
+    std::unordered_set<unsigned> _dirtyNodeIndices;
+    ForwardBoundWorkStats _forwardBoundWorkStats;
+    // Input-box center whose forward pass last populated the node shape caches
+    torch::Tensor _shapeCacheCenter;
+    std::size_t _shapeCachePasses = 0;
 
     void validateNodeIndex(unsigned nodeIndex) const;
     void cacheForwardShapesFromCenter();

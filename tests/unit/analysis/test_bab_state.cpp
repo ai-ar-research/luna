@@ -174,6 +174,40 @@ TEST_F(BaBStateTest, getState_afterCROWN_returnsAllBounds) {
     EXPECT_TRUE(hasOutputBounds);
 }
 
+TEST_F(BaBStateTest, incrementalBoundsReuseCleanNodesAndMatchFullRecomputation) {
+    auto model = ModelBuilder::createMLP(3, {5}, 2, true, false);
+    auto inputBounds = BoundGenerator::epsilonBall(torch::zeros({1, 3}), 0.1);
+    auto fullResult = model->compute_bounds(inputBounds, nullptr,
+                                            LunaConfiguration::AnalysisMethod::CROWN);
+    const auto parentBounds = model->getState().allBounds;
+
+    model->persistIntermediateBounds(parentBounds);
+    model->setDirtyNodeIndices({model->getOutputIndex()});
+    auto incrementalResult = model->compute_bounds(inputBounds, nullptr,
+                                                   LunaConfiguration::AnalysisMethod::CROWN);
+    const auto work = model->getForwardBoundWorkStats();
+    EXPECT_GT(work.reusedNodes, 0u);
+    EXPECT_LT(work.recomputedNodes, model->getNumNodes());
+    EXPECT_TRUE(TensorComparator::allClose(incrementalResult.lower(), fullResult.lower(),
+                                           1e-5, 1e-5));
+    EXPECT_TRUE(TensorComparator::allClose(incrementalResult.upper(), fullResult.upper(),
+                                           1e-5, 1e-5));
+
+    model->persistIntermediateBounds(parentBounds);
+    std::vector<unsigned> allDirtyNodes;
+    for (unsigned node = 0; node < model->getNumNodes(); ++node) {
+        allDirtyNodes.push_back(node);
+    }
+    model->setDirtyNodeIndices(allDirtyNodes);
+    auto referenceResult = model->compute_bounds(inputBounds, nullptr,
+                                                 LunaConfiguration::AnalysisMethod::CROWN);
+    EXPECT_EQ(model->getForwardBoundWorkStats().reusedNodes, 0u);
+    EXPECT_TRUE(TensorComparator::allClose(incrementalResult.lower(), referenceResult.lower(),
+                                           1e-5, 1e-5));
+    EXPECT_TRUE(TensorComparator::allClose(incrementalResult.upper(), referenceResult.upper(),
+                                           1e-5, 1e-5));
+}
+
 TEST_F(BaBStateTest, getState_afterAlphaCROWN_returnsAlphas) {
     auto model = ModelBuilder::createMLP(3, {5, 5}, 2, true, false);
     auto inputBounds = BoundGenerator::epsilonBall(torch::zeros({1, 3}), 0.1);
@@ -282,4 +316,20 @@ TEST_F(BaBStateTest, repeatedLoadStateAndRun) {
         EXPECT_TRUE(SoundnessChecker::centerContainedInBounds(
             inputBounds, result, *model));
     }
+}
+
+// BaB reuses one input box, so the center forward pass that caches node shapes runs once per box
+TEST_F( BaBStateTest, centerForwardPassRunsOncePerInputBox )
+{
+    auto model = ModelBuilder::createMLP( 3, { 5 }, 2, true, false );
+    auto inputBounds = BoundGenerator::epsilonBall( torch::zeros( { 1, 3 } ), 0.1 );
+
+    model->compute_bounds( inputBounds, nullptr, LunaConfiguration::AnalysisMethod::CROWN );
+    model->compute_bounds( inputBounds, nullptr, LunaConfiguration::AnalysisMethod::AlphaCROWN );
+    model->compute_bounds( inputBounds, nullptr, LunaConfiguration::AnalysisMethod::AlphaCROWN );
+    EXPECT_EQ( model->getShapeCachePassCount(), 1u );
+
+    auto shiftedBounds = BoundGenerator::epsilonBall( torch::ones( { 1, 3 } ), 0.1 );
+    model->compute_bounds( shiftedBounds, nullptr, LunaConfiguration::AnalysisMethod::AlphaCROWN );
+    EXPECT_EQ( model->getShapeCachePassCount(), 2u );
 }

@@ -885,6 +885,7 @@ BoundedTensor<torch::Tensor> TorchModel::compute_bounds(
 {
 
     log( "[TorchModel] compute_bounds() called - unified analysis entry point" );
+    _forwardBoundWorkStats = {};
 
     resetAnalysisState();
 
@@ -1024,6 +1025,14 @@ void TorchModel::cacheForwardShapesFromCenter()
 
     torch::Tensor center = ( lb + ub ) / 2.0;
 
+    // Node shape caches depend only on the box, so an unchanged center has nothing to refresh
+    if ( _shapeCacheCenter.defined() && _shapeCacheCenter.sizes() == center.sizes() &&
+         _shapeCacheCenter.device() == center.device() && torch::equal( _shapeCacheCenter, center ) )
+    {
+        return;
+    }
+    const torch::Tensor boxCenter = center.clone();
+
     // heuristic reshape to common image formats
     if ( center.numel() == 9408 )
     {
@@ -1055,6 +1064,8 @@ void TorchModel::cacheForwardShapesFromCenter()
         // best-effort optimization; don't fail analysis
         return;
     }
+    _shapeCacheCenter = boxCenter;
+    ++_shapeCachePasses;
 }
 
 BoundedTensor<torch::Tensor> TorchModel::runAlphaCROWN( bool optimizeLower, bool optimizeUpper )
@@ -1130,16 +1141,30 @@ TorchModel::runAlphaCROWN( const BoundedTensor<torch::Tensor> &inputBounds, bool
         return runCROWN( inputBounds );
     }
 
+    // computeOptimizedBounds() finishes by running CROWN with the best alpha
+    // parameters and leaves both concrete output bounds and per-node bounds
+    // in its CROWNAnalysis. Reuse the unoptimized side from that traversal;
+    // a second runCROWN() would repeat the full forward and backward analysis.
+    const auto getCurrentCrownOutputBounds = [&]() {
+        const auto bounds = alphaCrownAnalysis->getCROWNAnalysis()->getOutputBounds();
+        if ( !bounds.lower().defined() || !bounds.upper().defined() )
+        {
+            throw std::runtime_error(
+                "AlphaCROWNAnalysis did not retain complete output bounds after optimization" );
+        }
+        return bounds;
+    };
+
     if ( !optimizeLower )
     {
-        log( "[TorchModel] Computing lower bounds with CROWN (not optimized)" );
-        auto crownBounds = runCROWN( inputBounds );
+        log( "[TorchModel] Reusing lower bounds from the AlphaCROWN traversal" );
+        auto crownBounds = getCurrentCrownOutputBounds();
         finalLower = crownBounds.lower();
     }
     if ( !optimizeUpper )
     {
-        log( "[TorchModel] Computing upper bounds with CROWN (not optimized)" );
-        auto crownBounds = runCROWN( inputBounds );
+        log( "[TorchModel] Reusing upper bounds from the AlphaCROWN traversal" );
+        auto crownBounds = getCurrentCrownOutputBounds();
         finalUpper = crownBounds.upper();
     }
 
@@ -1349,12 +1374,40 @@ TorchModel::getPersistedIntermediateBounds() const
     return _persistedIntermediateBounds;
 }
 
+void TorchModel::setDirtyNodeIndices( const std::vector<unsigned> &nodeIndices )
+{
+    _dirtyNodeIndices.clear();
+    _dirtyNodeIndices.insert( nodeIndices.begin(), nodeIndices.end() );
+}
+
+bool TorchModel::isIncrementalNodeDirty( unsigned nodeIndex ) const
+{
+    return _dirtyNodeIndices.empty() || _dirtyNodeIndices.count( nodeIndex ) > 0;
+}
+
+void TorchModel::setForwardBoundWorkStats( std::size_t recomputed, std::size_t reused )
+{
+    _forwardBoundWorkStats = { recomputed, reused };
+}
+
+const TorchModel::ForwardBoundWorkStats &TorchModel::getForwardBoundWorkStats() const
+{
+    return _forwardBoundWorkStats;
+}
+
+std::size_t TorchModel::getShapeCachePassCount() const
+{
+    return _shapeCachePasses;
+}
+
 void TorchModel::clearPersistedState()
 {
     _persistedAlphas.clear();
     _hasPersistedAlphas = false;
     _persistedIntermediateBounds.clear();
     _hasPersistedIntermediateBounds = false;
+    _dirtyNodeIndices.clear();
+    _forwardBoundWorkStats = {};
     log( "[TorchModel] clearPersistedState() completed" );
 }
 

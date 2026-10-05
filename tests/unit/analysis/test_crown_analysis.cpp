@@ -1,4 +1,5 @@
 #include <gtest/gtest.h>
+#include "src/configuration/LunaConfiguration.h"
 #include "src/engine/CROWNAnalysis.h"
 #include "src/engine/conv/Patches.h"
 #include "src/engine/TorchModel.h"
@@ -183,6 +184,65 @@ TEST_F( CROWNAnalysisTest, IBPForwardBasic )
     // Verify upper >= lower
     torch::Tensor width = ibpBounds.upper() - ibpBounds.lower();
     EXPECT_TRUE( torch::all( width >= 0 ).item<bool>() );
+}
+
+TEST_F( CROWNAnalysisTest, IBPIgnoresPropertySizedCachedOutputBounds )
+{
+    auto model = ModelBuilder::createMLP( 2, { 3 }, 2, true, false );
+    auto inputBounds = BoundGenerator::epsilonBall( torch::zeros( { 1, 2 } ), 0.1 );
+    model->setInputBounds( inputBounds );
+
+    auto output = model->getNode( model->getOutputIndex() );
+    ASSERT_NE( output, nullptr );
+    output->setBounds( torch::zeros( { 99 } ), torch::ones( { 99 } ) );
+
+    NLR::CROWNAnalysis analysis( model.get() );
+    analysis.setInputBounds( inputBounds );
+    analysis.computeIBPBounds();
+
+    const auto bounds = analysis.getOutputIBPBounds();
+    EXPECT_EQ( bounds.lower().numel(), 2 );
+    EXPECT_EQ( bounds.upper().numel(), 2 );
+}
+
+// Fixed intermediates keep seeded node bounds even when a branch split marks every node dirty
+TEST_F( CROWNAnalysisTest, FixedIntermediatesReuseSeededNodesEvenWhenDirty )
+{
+    auto model = ModelBuilder::createMLP( 2, { 3 }, 2, true, false );
+    auto inputBounds = BoundGenerator::epsilonBall( torch::zeros( { 1, 2 } ), 0.1 );
+    model->setInputBounds( inputBounds );
+
+    std::vector<unsigned> allNodes;
+    std::size_t seededNodes = 0;
+    for ( unsigned index = 0; index < model->getNumNodes(); ++index )
+    {
+        allNodes.push_back( index );
+        auto node = model->getNode( index );
+        if ( !node || node->getNodeType() == NodeType::INPUT )
+            continue;
+        const auto size = static_cast<int64_t>( node->getOutputSize() );
+        node->setBounds( torch::full( { size }, -7.0 ), torch::full( { size }, 7.0 ) );
+        ++seededNodes;
+    }
+    ASSERT_GT( seededNodes, 0u );
+    model->setDirtyNodeIndices( allNodes );
+
+    const bool previousRecompute = LunaConfiguration::RECOMPUTE_INTERMEDIATE_BOUNDS;
+    LunaConfiguration::RECOMPUTE_INTERMEDIATE_BOUNDS = false;
+    NLR::CROWNAnalysis fixedAnalysis( model.get() );
+    fixedAnalysis.setInputBounds( inputBounds );
+    fixedAnalysis.computeIBPBounds();
+    const auto fixedStats = model->getForwardBoundWorkStats();
+
+    LunaConfiguration::RECOMPUTE_INTERMEDIATE_BOUNDS = true;
+    NLR::CROWNAnalysis recomputeAnalysis( model.get() );
+    recomputeAnalysis.setInputBounds( inputBounds );
+    recomputeAnalysis.computeIBPBounds();
+    const auto recomputeStats = model->getForwardBoundWorkStats();
+    LunaConfiguration::RECOMPUTE_INTERMEDIATE_BOUNDS = previousRecompute;
+
+    EXPECT_EQ( fixedStats.reusedNodes, seededNodes );
+    EXPECT_EQ( recomputeStats.reusedNodes, 0u );
 }
 
 TEST_F( CROWNAnalysisTest, CROWNTighterThanIBP )
