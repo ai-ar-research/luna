@@ -755,6 +755,17 @@ void BoundedReLUNode::_maskAlpha( const torch::Tensor &input_lower,
                 torch::where( always_active_expanded, torch::ones( { specDim, outDim }, options ),
                               alpha_upper_full );
 
+            // A neuron that became inactive after its alpha was built outputs zero, so its slope is
+            // 0
+            auto always_inactive_expanded =
+                always_inactive_mask.unsqueeze( 0 ).expand( { specDim, outDim } );
+            alpha_lower_full =
+                torch::where( always_inactive_expanded,
+                              torch::zeros( { specDim, outDim }, options ), alpha_lower_full );
+            alpha_upper_full =
+                torch::where( always_inactive_expanded,
+                              torch::zeros( { specDim, outDim }, options ), alpha_upper_full );
+
             auto upper_d_flat = upper_d.flatten();
             auto upper_d_masked =
                 torch::where( always_active_mask, torch::ones_like( upper_d_flat ), upper_d_flat );

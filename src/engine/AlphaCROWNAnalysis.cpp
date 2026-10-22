@@ -180,7 +180,8 @@ AlphaParameters &AlphaCROWNAnalysis::ensureAlphaFor( unsigned nodeIndex,
             unstable_mismatch = !ap.unstableIndices.equal( currentIndices );
         }
 
-        if ( spec_mismatch || unstable_mismatch )
+        // A frozen entry keeps the unstable set it was built for, since the optimizer holds it
+        if ( spec_mismatch || ( unstable_mismatch && !_freezeAlphaSets ) )
         {
             perStart.erase( it );
             need_new = true;
@@ -457,6 +458,21 @@ torch::Tensor AlphaCROWNAnalysis::computeOptimizedBounds( LunaConfiguration::Bou
         alphaParams, torch::optim::AdamOptions( _learningRate )
                          .betas( std::make_tuple( 0.9, 0.999 ) )
                          .eps( 1e-8 ) );
+
+    // From here the optimizer owns these tensors, so they are not rebuilt until the run ends
+    struct FreezeAlphaSets
+    {
+        bool &flag;
+        explicit FreezeAlphaSets( bool &f )
+            : flag( f )
+        {
+            flag = true;
+        }
+        ~FreezeAlphaSets()
+        {
+            flag = false;
+        }
+    } freezeAlphaSets( _freezeAlphaSets );
 
     torch::Tensor bestBounds;
     float currentLR = _learningRate;

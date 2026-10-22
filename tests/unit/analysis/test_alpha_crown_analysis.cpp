@@ -6,6 +6,9 @@
 #include "fixtures/test_utils.h"
 #include <torch/torch.h>
 
+#include <iterator>
+#include <map>
+
 using namespace NLR;
 using namespace test;
 
@@ -134,6 +137,55 @@ TEST_F(AlphaCROWNAnalysisTest, RecomputeIntermediateBoundsProducesTighterBounds)
 
     LunaConfiguration::STABILIZE_INTERMEDIATE_BOUNDS = true;
     LunaConfiguration::RECOMPUTE_INTERMEDIATE_BOUNDS = true;
+}
+
+TEST_F( AlphaCROWNAnalysisTest, DeeperLayerAlphasLeaveTheirInitialSlopes )
+{
+    // Alphas that are rebuilt during optimization are no longer the tensors the optimizer
+    // updates, so the layers whose unstable set shifts as earlier alphas improve never train.
+    torch::manual_seed( 123 );
+    auto model = ModelBuilder::createMLP( 5, { 15, 15, 15 }, 3, true, true );
+
+    auto inputBounds = BoundGenerator::epsilonBall( torch::randn( { 1, 5 } ) * 0.3, 0.15 );
+    model->setInputBounds( inputBounds );
+
+    // The analysis only optimizes alphas when the configured method is AlphaCROWN
+    const auto priorMethod = LunaConfiguration::ANALYSIS_METHOD;
+    LunaConfiguration::ANALYSIS_METHOD = LunaConfiguration::AnalysisMethod::AlphaCROWN;
+    LunaConfiguration::ALPHA_ITERATIONS = 20;
+    LunaConfiguration::RECOMPUTE_INTERMEDIATE_BOUNDS = true;
+
+    NLR::AlphaCROWNAnalysis analysis( model.get() );
+    analysis.getCROWNAnalysis()->setInputBounds( inputBounds );
+    analysis.computeOptimizedBounds( LunaConfiguration::BoundSide::Lower );
+    LunaConfiguration::ANALYSIS_METHOD = priorMethod;
+
+    ASSERT_TRUE( analysis.isAlphaEnabled() );
+    ASSERT_GT( analysis.getNumOptimizableNodes(), 0u ) << "the model has no alpha-optimizable ReLU";
+
+    // Entries still at exactly 0 or 1 never left their CROWN initialization
+    std::map<unsigned, int64_t> interiorByNode;
+    for ( const auto &[node, perStart] : analysis.extractAlphas() )
+    {
+        for ( const auto &[start, parameters] : perStart )
+        {
+            if ( !parameters.alpha.defined() || parameters.alpha.numel() == 0 )
+            {
+                continue;
+            }
+            const auto flat = parameters.alpha.detach().flatten();
+            interiorByNode[node] += flat.numel() - ( flat == 0 ).sum().item<int64_t>() -
+                                    ( flat == 1 ).sum().item<int64_t>();
+        }
+    }
+    ASSERT_GE( interiorByNode.size(), 2u );
+
+    int64_t deeperInterior = 0;
+    for ( auto it = std::next( interiorByNode.begin() ); it != interiorByNode.end(); ++it )
+    {
+        deeperInterior += it->second;
+    }
+    EXPECT_GT( deeperInterior, 0 ) << "no alpha beyond the first ReLU layer was trained";
 }
 
 TEST(AlphaCROWNConfigDefaults, RecomputeIntermediateBoundsDefaultsToTrue) {

@@ -131,6 +131,10 @@ private:
     bool _alphaEnabled;
     bool _initialized;
     bool _reuseIntermediateBounds{false};
+
+    // While the optimizer runs its alpha tensors must stay the ones it holds, so their unstable
+    // sets are not rebuilt when recomputed intermediate bounds move a neuron across zero
+    bool _freezeAlphaSets{ false };
     unsigned _iteration;
     float _learningRate;
     std::string _optimizationStage;
