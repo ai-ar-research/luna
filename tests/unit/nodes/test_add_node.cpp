@@ -50,3 +50,43 @@ TEST_F(AddNodeTest, IBPBasic) {
     EXPECT_TENSORS_CLOSE(result.lower(), expectedLower, 1e-5, 1e-4);
     EXPECT_TENSORS_CLOSE(result.upper(), expectedUpper, 1e-5, 1e-4);
 }
+
+// A flat coefficient matrix against an unflattened operand holds the same elements, so no broadcast
+TEST_F( AddNodeTest, BackwardKeepsFlatFeaturesForAnUnflattenedOperandOfTheSameSize )
+{
+    torch::Tensor constant = torch::tensor( { 1.0, 2.0, 3.0, 4.0, 5.0 } ).reshape( { 1, 1, 1, 5 } );
+    _addNode->setConstantValue( constant );
+
+    Vector<BoundedTensor<torch::Tensor>> inputBounds;
+    inputBounds.append( BoundedTensor<torch::Tensor>( torch::zeros( { 1, 1, 1, 5 } ),
+                                                      torch::ones( { 1, 1, 1, 5 } ) ) );
+    BoundA lastA( torch::ones( { 1, 1, 5 } ) );
+    Vector<Pair<BoundA, BoundA>> outputA;
+    torch::Tensor lbias;
+    torch::Tensor ubias;
+
+    _addNode->boundBackward( lastA, lastA, inputBounds, outputA, lbias, ubias );
+
+    ASSERT_EQ( outputA.size(), 1u );
+    EXPECT_EQ( outputA[0].first().asTensor().sizes(), torch::IntArrayRef( { 1, 1, 5 } ) );
+    EXPECT_NEAR( lbias.item<double>(), 15.0, 1e-5 );
+}
+
+// A scalar operand is broadcast over every feature, so its coefficient is the sum across them
+TEST_F( AddNodeTest, BackwardSumsOverFeaturesForABroadcastOperand )
+{
+    Vector<BoundedTensor<torch::Tensor>> inputBounds;
+    inputBounds.append(
+        BoundedTensor<torch::Tensor>( torch::zeros( { 1, 1 } ), torch::ones( { 1, 1 } ) ) );
+    BoundA lastA( torch::ones( { 1, 1, 4 } ) );
+    Vector<Pair<BoundA, BoundA>> outputA;
+    torch::Tensor lbias;
+    torch::Tensor ubias;
+
+    _addNode->boundBackward( lastA, lastA, inputBounds, outputA, lbias, ubias );
+
+    ASSERT_EQ( outputA.size(), 1u );
+    const torch::Tensor collapsed = outputA[0].first().asTensor();
+    EXPECT_EQ( collapsed.sizes(), torch::IntArrayRef( { 1, 1, 1 } ) );
+    EXPECT_NEAR( collapsed.item<double>(), 4.0, 1e-5 );
+}

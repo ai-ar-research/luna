@@ -120,27 +120,32 @@ torch::Tensor BoundedAddNode::broadcast_backward(const torch::Tensor& last_A, co
     if (spec_offset == 1 && A.dim() < 3) return A;
 
     const int64_t payload_start = (spec_offset == 1) ? 2 : 1;
+
+    // Broadcasting only expands an operand, so equal element counts mean A already matches it
+    int64_t op_payload_numel = 1;
+    for ( int64_t i = 1; i < op_rank; ++i )
+        op_payload_numel *= operand_shape[(size_t)i];
+    int64_t A_payload_numel = 1;
+    for ( int64_t i = payload_start; i < A.dim(); ++i )
+        A_payload_numel *= A.size( i );
+    if ( op_payload_numel == A_payload_numel )
+    {
+        return A;
+    }
+
     const int64_t A_payload_dims = A.dim() - payload_start;
     const int64_t op_payload_dims = op_rank - 1;
     if (A_payload_dims > op_payload_dims) {
-        // Don't reduce if operand is just a flattened view of the same tensor
-        int64_t op_payload_numel = 1;
-        for (int64_t i = 1; i < op_rank; ++i) op_payload_numel *= operand_shape[(size_t)i];
-        int64_t A_payload_numel = 1;
-        for (int64_t i = payload_start; i < A.dim(); ++i) A_payload_numel *= A.size(i);
-
-        if (op_payload_dims == 1 && op_payload_numel == A_payload_numel) {
-            // Keep A as-is
-        } else {
-            const int64_t num_extra = A_payload_dims - op_payload_dims;
-            std::vector<int64_t> sum_dims;
-            sum_dims.reserve((size_t)num_extra);
-            for (int64_t i = 0; i < num_extra; ++i) {
-                sum_dims.push_back(payload_start + i);
-            }
-            if (!sum_dims.empty()) {
-                A = A.sum(sum_dims);
-            }
+        const int64_t num_extra = A_payload_dims - op_payload_dims;
+        std::vector<int64_t> sum_dims;
+        sum_dims.reserve( (size_t)num_extra );
+        for ( int64_t i = 0; i < num_extra; ++i )
+        {
+            sum_dims.push_back( payload_start + i );
+        }
+        if ( !sum_dims.empty() )
+        {
+            A = A.sum( sum_dims );
         }
     }
 
