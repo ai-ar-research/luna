@@ -15,47 +15,79 @@
 #include "BoundedTorchNode.h"
 #include "../input_parsers/Operations.h"
 
-namespace NLR {
+namespace NLR
+{
 
-class BoundedFlattenNode : public BoundedTorchNode {
+class BoundedFlattenNode : public BoundedTorchNode
+{
 public:
-    BoundedFlattenNode(const Operations::FlattenWrapper& flatten_module);
+    BoundedFlattenNode( const Operations::FlattenWrapper &flatten_module );
 
-    NLR::NodeType getNodeType() const override { return NLR::NodeType::FLATTEN; }
-    String getNodeName() const override { return _nodeName; }
-    unsigned getNodeIndex() const override { return _nodeIndex; }
+    NLR::NodeType getNodeType() const override
+    {
+        return NLR::NodeType::FLATTEN;
+    }
+    String getNodeName() const override
+    {
+        return _nodeName;
+    }
+    unsigned getNodeIndex() const override
+    {
+        return _nodeIndex;
+    }
 
-    torch::Tensor forward(const torch::Tensor& input) override;
+    torch::Tensor forward( const torch::Tensor &input ) override;
 
-    Pair<torch::Tensor, torch::Tensor> computeCrownBackwardPropagation(const torch::Tensor& lastLowerAlpha,
-                                               const torch::Tensor& lastUpperAlpha,
-                                               const Vector<BoundedTensor<torch::Tensor>>& inputs);
+    Pair<torch::Tensor, torch::Tensor>
+    computeCrownBackwardPropagation( const torch::Tensor &lastLowerAlpha,
+                                     const torch::Tensor &lastUpperAlpha,
+                                     const Vector<BoundedTensor<torch::Tensor>> &inputs );
 
-    BoundedTensor<torch::Tensor> computeIntervalBoundPropagation(
-        const Vector<BoundedTensor<torch::Tensor>>& inputs) override;
+    BoundedTensor<torch::Tensor>
+    computeIntervalBoundPropagation( const Vector<BoundedTensor<torch::Tensor>> &inputs ) override;
 
-    void boundBackward(
-        const BoundA& last_lA,
-        const BoundA& last_uA,
-        const Vector<BoundedTensor<torch::Tensor>>& inputBounds,
-        Vector<Pair<BoundA, BoundA>>& outputA_matrices,
-        torch::Tensor& lbias,
-        torch::Tensor& ubias
-    ) override;
+    void boundBackward( const BoundA &last_lA, const BoundA &last_uA,
+                        const Vector<BoundedTensor<torch::Tensor>> &inputBounds,
+                        Vector<Pair<BoundA, BoundA>> &outputA_matrices, torch::Tensor &lbias,
+                        torch::Tensor &ubias ) override;
 
-    unsigned getInputSize() const override { return _input_size; }
-    unsigned getOutputSize() const override { return _output_size; }
-    bool isPerturbed() const override { return true; }
-    String getModuleType() const { return "Flatten"; }
+    unsigned getInputSize() const override
+    {
+        return _input_size;
+    }
+    unsigned getOutputSize() const override
+    {
+        return _output_size;
+    }
+    bool isPerturbed() const override
+    {
+        return true;
+    }
+    String getModuleType() const
+    {
+        return "Flatten";
+    }
 
-    void setInputSize(unsigned size) override;
-    void setOutputSize(unsigned size) override;
+    void setInputSize( unsigned size ) override;
+    void setOutputSize( unsigned size ) override;
 
-    void setNodeIndex(unsigned index) override { _nodeIndex = index; }
-    void setNodeName(const String& name) override { _nodeName = name; }
+    void setNodeIndex( unsigned index ) override
+    {
+        _nodeIndex = index;
+    }
+    void setNodeName( const String &name ) override
+    {
+        _nodeName = name;
+    }
 
-    void setInputShape(const std::vector<int64_t>& shape) { _input_shape = shape; }
-    const std::vector<int64_t>& getInputShape() const { return _input_shape; }
+    void setInputShape( const std::vector<int64_t> &shape )
+    {
+        _input_shape = shape;
+    }
+    const std::vector<int64_t> &getInputShape() const
+    {
+        return _input_shape;
+    }
 
 private:
     Operations::FlattenWrapper _flatten_module;

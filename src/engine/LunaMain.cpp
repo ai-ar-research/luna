@@ -21,29 +21,38 @@
 #include <string>
 #include <vector>
 
-static void printBounds(const torch::Tensor& lower, const torch::Tensor& upper) {
+static void printBounds( const torch::Tensor &lower, const torch::Tensor &upper )
+{
     torch::Tensor lb = lower;
     torch::Tensor ub = upper;
-    if (lb.dim() == 0) lb = lb.unsqueeze(0);
-    if (ub.dim() == 0) ub = ub.unsqueeze(0);
+    if ( lb.dim() == 0 )
+        lb = lb.unsqueeze( 0 );
+    if ( ub.dim() == 0 )
+        ub = ub.unsqueeze( 0 );
 
-    std::cout << std::fixed << std::setprecision(6);
+    std::cout << std::fixed << std::setprecision( 6 );
 
     std::cout << " " << std::endl;
     std::cout << "Lower Bounds: [";
-    for (int i = 0; i < lb.size(0); ++i) {
+    for ( int i = 0; i < lb.size( 0 ); ++i )
+    {
         auto l = lb[i];
-        if (l.dim() > 0) l = l.flatten()[0];
-        if (i > 0) std::cout << ", ";
+        if ( l.dim() > 0 )
+            l = l.flatten()[0];
+        if ( i > 0 )
+            std::cout << ", ";
         std::cout << l.item<double>();
     }
     std::cout << "]" << std::endl;
 
     std::cout << "Upper Bounds: [";
-    for (int i = 0; i < ub.size(0); ++i) {
+    for ( int i = 0; i < ub.size( 0 ); ++i )
+    {
         auto u = ub[i];
-        if (u.dim() > 0) u = u.flatten()[0];
-        if (i > 0) std::cout << ", ";
+        if ( u.dim() > 0 )
+            u = u.flatten()[0];
+        if ( i > 0 )
+            std::cout << ", ";
         std::cout << u.item<double>();
     }
     std::cout << "]" << std::endl;
@@ -51,19 +60,21 @@ static void printBounds(const torch::Tensor& lower, const torch::Tensor& upper) 
     std::cout << std::defaultfloat;
 }
 
-enum class PropertyStatus {
+enum class PropertyStatus
+{
     Unsat,
     Sat,
     Unknown
 };
 
-static PropertyStatus evaluatePropertyStatus(
-    const NLR::CMatrixResult& cMatrix,
-    const torch::Tensor& lowerBounds,
-    const torch::Tensor& upperBounds,
-    std::string& detail) {
+static PropertyStatus evaluatePropertyStatus( const NLR::CMatrixResult &cMatrix,
+                                              const torch::Tensor &lowerBounds,
+                                              const torch::Tensor &upperBounds,
+                                              std::string &detail )
+{
 
-    if (!lowerBounds.defined() || !upperBounds.defined()) {
+    if ( !lowerBounds.defined() || !upperBounds.defined() )
+    {
         detail = "bounds are undefined";
         return PropertyStatus::Unknown;
     }
@@ -71,40 +82,46 @@ static PropertyStatus evaluatePropertyStatus(
     torch::Tensor lb = lowerBounds.flatten();
     torch::Tensor ub = upperBounds.flatten();
 
-    if (lb.numel() == 0 || ub.numel() == 0) {
+    if ( lb.numel() == 0 || ub.numel() == 0 )
+    {
         detail = "bounds are empty";
         return PropertyStatus::Unknown;
     }
 
-    torch::Tensor thresholds = cMatrix.thresholds.to(ub.device());
+    torch::Tensor thresholds = cMatrix.thresholds.to( ub.device() );
 
-    if (lb.numel() != thresholds.numel() || ub.numel() != thresholds.numel()) {
+    if ( lb.numel() != thresholds.numel() || ub.numel() != thresholds.numel() )
+    {
         detail = "bounds/threshold size mismatch";
         return PropertyStatus::Unknown;
     }
 
-    if (cMatrix.hasORBranches) {
-        Vector<NLR::BranchResult> branchResults =
-            NLR::OutputConstraintSet::evaluateORBranches(lb, ub, thresholds,
-                                                         cMatrix.branchMapping,
-                                                         cMatrix.branchSizes);
+    if ( cMatrix.hasORBranches )
+    {
+        Vector<NLR::BranchResult> branchResults = NLR::OutputConstraintSet::evaluateORBranches(
+            lb, ub, thresholds, cMatrix.branchMapping, cMatrix.branchSizes );
         bool allBranchesDisproved = true;
         bool anyBranchAlwaysSat = false;
 
-        for (const auto& branch : branchResults) {
-            if (!branch.verified) {
+        for ( const auto &branch : branchResults )
+        {
+            if ( !branch.verified )
+            {
                 allBranchesDisproved = false;
             }
-            if (branch.refuted) {
+            if ( branch.refuted )
+            {
                 anyBranchAlwaysSat = true;
             }
         }
 
-        if (allBranchesDisproved) {
+        if ( allBranchesDisproved )
+        {
             detail = "all OR-branches disproved (no counterexample possible)";
             return PropertyStatus::Unsat;
         }
-        if (anyBranchAlwaysSat) {
+        if ( anyBranchAlwaysSat )
+        {
             detail = "at least one OR-branch always satisfiable (counterexample exists)";
             return PropertyStatus::Sat;
         }
@@ -114,18 +131,21 @@ static PropertyStatus evaluatePropertyStatus(
 
     // lb > threshold breaks the counterexample AND-conjunction
     torch::Tensor lowerDiff = lb - thresholds;
-    bool anyDisproved = (lowerDiff > 0).any().item<bool>();
+    bool anyDisproved = ( lowerDiff > 0 ).any().item<bool>();
 
-    if (anyDisproved) {
-        detail = "lower bound > threshold for at least one constraint (counterexample conjunction broken)";
+    if ( anyDisproved )
+    {
+        detail = "lower bound > threshold for at least one constraint (counterexample conjunction "
+                 "broken)";
         return PropertyStatus::Unsat;
     }
 
     // ub <= threshold for all constraints means counterexample always satisfiable
     torch::Tensor upperDiff = ub - thresholds;
-    bool allSatisfiable = (upperDiff <= 0).all().item<bool>();
+    bool allSatisfiable = ( upperDiff <= 0 ).all().item<bool>();
 
-    if (allSatisfiable) {
+    if ( allSatisfiable )
+    {
         detail = "all upper bounds <= threshold (counterexample always satisfiable)";
         return PropertyStatus::Sat;
     }
@@ -134,9 +154,11 @@ static PropertyStatus evaluatePropertyStatus(
     return PropertyStatus::Unknown;
 }
 
-void printUsage(const char* programName) {
+void printUsage( const char *programName )
+{
     std::cout << "Usage: " << programName << " <onnx_file> <vnnlib_file> [options]" << std::endl;
-    std::cout << "   or: " << programName << " --input <onnx_file> --vnnlib <vnnlib_file> [options]" << std::endl;
+    std::cout << "   or: " << programName << " --input <onnx_file> --vnnlib <vnnlib_file> [options]"
+              << std::endl;
     std::cout << std::endl;
     std::cout << "Positional arguments:" << std::endl;
     std::cout << "  onnx_file          Path to ONNX model file" << std::endl;
@@ -144,15 +166,18 @@ void printUsage(const char* programName) {
     std::cout << std::endl;
     std::cout << "Flag-based arguments:" << std::endl;
     std::cout << "  --input <path>                  Input ONNX model path" << std::endl;
-    std::cout << "  --vnnlib <path>                 VNN-LIB property path (alias for --property)" << std::endl;
+    std::cout << "  --vnnlib <path>                 VNN-LIB property path (alias for --property)"
+              << std::endl;
     std::cout << "  --property <path>               VNN-LIB property path" << std::endl;
     std::cout << std::endl;
     std::cout << "Options:" << std::endl;
     std::cout << "  --method <crown|alpha-crown>    Analysis method (default: crown)" << std::endl;
-    std::cout << "  --iterations <n>                Alpha-CROWN iterations (default: 20)" << std::endl;
+    std::cout << "  --iterations <n>                Alpha-CROWN iterations (default: 20)"
+              << std::endl;
     std::cout << "  --lr <float>                    Learning rate (default: 0.5)" << std::endl;
     std::cout << "  --lr-decay <float>              LR decay factor (default: 0.98)" << std::endl;
-    std::cout << "  --timeout <seconds>             Global timeout (default: 0 = none)" << std::endl;
+    std::cout << "  --timeout <seconds>             Global timeout (default: 0 = none)"
+              << std::endl;
     std::cout << "  --seed <n>                      Random seed (default: 1)" << std::endl;
     std::cout << "  --verbose / --quiet             Verbosity control" << std::endl;
     std::cout << "  --optimize-lower / --no-optimize-lower" << std::endl;
@@ -162,11 +187,14 @@ void printUsage(const char* programName) {
     std::cout << "  --help, -h                      Print this help message" << std::endl;
 }
 
-int lunaMain(int argc, char* argv[]) {
-    if (argc > 1) {
+int lunaMain( int argc, char *argv[] )
+{
+    if ( argc > 1 )
+    {
         std::string firstArg = argv[1];
-        if (firstArg == "--help" || firstArg == "-h") {
-            printUsage(argv[0]);
+        if ( firstArg == "--help" || firstArg == "-h" )
+        {
+            printUsage( argv[0] );
             return 0;
         }
     }
@@ -175,118 +203,145 @@ int lunaMain(int argc, char* argv[]) {
     std::string vnnlibFilePath;
     bool useFlags = false;
 
-    for (int i = 1; i < argc; ++i) {
+    for ( int i = 1; i < argc; ++i )
+    {
         std::string arg = argv[i];
-        if (arg == "--input" || arg == "--property" || arg == "--vnnlib") {
+        if ( arg == "--input" || arg == "--property" || arg == "--vnnlib" )
+        {
             useFlags = true;
             break;
         }
     }
 
-    if (useFlags) {
-        LunaConfiguration::parseArgs(argc, argv);
+    if ( useFlags )
+    {
+        LunaConfiguration::parseArgs( argc, argv );
 
-        if (LunaConfiguration::INPUT_FILE_PATH.length() == 0) {
+        if ( LunaConfiguration::INPUT_FILE_PATH.length() == 0 )
+        {
             std::cerr << "ERROR: --input flag is required" << std::endl;
-            printUsage(argv[0]);
+            printUsage( argv[0] );
             return 1;
         }
-        if (LunaConfiguration::PROPERTY_FILE_PATH.length() == 0) {
+        if ( LunaConfiguration::PROPERTY_FILE_PATH.length() == 0 )
+        {
             std::cerr << "ERROR: --property or --vnnlib flag is required" << std::endl;
-            printUsage(argv[0]);
+            printUsage( argv[0] );
             return 1;
         }
 
         onnxFilePath = LunaConfiguration::INPUT_FILE_PATH.ascii();
         vnnlibFilePath = LunaConfiguration::PROPERTY_FILE_PATH.ascii();
-    } else {
-        if (argc < 3) {
-            printUsage(argv[0]);
+    }
+    else
+    {
+        if ( argc < 3 )
+        {
+            printUsage( argv[0] );
             return 1;
         }
 
         onnxFilePath = argv[1];
         vnnlibFilePath = argv[2];
 
-        std::vector<char*> configArgs;
-        configArgs.push_back(argv[0]);
-        for (int i = 3; i < argc; ++i) {
-            configArgs.push_back(argv[i]);
+        std::vector<char *> configArgs;
+        configArgs.push_back( argv[0] );
+        for ( int i = 3; i < argc; ++i )
+        {
+            configArgs.push_back( argv[i] );
         }
 
-        LunaConfiguration::parseArgs(static_cast<int>(configArgs.size()), configArgs.data());
+        LunaConfiguration::parseArgs( static_cast<int>( configArgs.size() ), configArgs.data() );
     }
 
-    try {
-        if (LunaConfiguration::USE_CUDA) {
-            if (LunaConfiguration::VERBOSE) {
-                std::cout << "CUDA active: using " << at::get_num_threads() << " CPU threads" << std::endl;
+    try
+    {
+        if ( LunaConfiguration::USE_CUDA )
+        {
+            if ( LunaConfiguration::VERBOSE )
+            {
+                std::cout << "CUDA active: using " << at::get_num_threads() << " CPU threads"
+                          << std::endl;
             }
-        } else if (LunaConfiguration::VERBOSE) {
+        }
+        else if ( LunaConfiguration::VERBOSE )
+        {
             std::cout << "CPU mode: using " << at::get_num_threads() << " threads" << std::endl;
         }
 
-        if (LunaConfiguration::VERBOSE) {
-            if (torch::cuda::is_available()) {
-                std::cout << "CUDA available with "
-                          << torch::cuda::device_count() << " devices" << std::endl;
+        if ( LunaConfiguration::VERBOSE )
+        {
+            if ( torch::cuda::is_available() )
+            {
+                std::cout << "CUDA available with " << torch::cuda::device_count() << " devices"
+                          << std::endl;
             }
-            std::cout << "Using device: "
-                      << LunaConfiguration::getDevice().str() << std::endl;
+            std::cout << "Using device: " << LunaConfiguration::getDevice().str() << std::endl;
         }
 
         std::cout << "Model:    " << onnxFilePath << std::endl;
         std::cout << "Property: " << vnnlibFilePath << std::endl;
 
         std::shared_ptr<NLR::TorchModel> torchModel = std::make_shared<NLR::TorchModel>(
-            String(onnxFilePath.c_str()),
-            String(vnnlibFilePath.c_str())
-        );
+            String( onnxFilePath.c_str() ), String( vnnlibFilePath.c_str() ) );
 
-        if (LunaConfiguration::VERBOSE) {
+        if ( LunaConfiguration::VERBOSE )
+        {
             std::cout << "TorchModel created successfully" << std::endl;
             std::cout << "Input size: " << torchModel->getInputSize() << std::endl;
             std::cout << "Output size: " << torchModel->getOutputSize() << std::endl;
             std::cout << "Number of nodes: " << torchModel->getNumNodes() << std::endl;
         }
 
-        if (!torchModel->hasInputBounds()) {
+        if ( !torchModel->hasInputBounds() )
+        {
             std::cerr << "ERROR: Input bounds not loaded from VNN-LIB file!" << std::endl;
             return 1;
         }
 
         BoundedTensor<torch::Tensor> inputBounds = torchModel->getInputBounds();
 
-        if (LunaConfiguration::VERBOSE) {
+        if ( LunaConfiguration::VERBOSE )
+        {
             std::cout << "\nInput bounds loaded from VNN-LIB file" << std::endl;
             torch::Tensor lowerBounds = inputBounds.lower();
             torch::Tensor upperBounds = inputBounds.upper();
-            std::cout << "  Input bounds: " << lowerBounds.size(0) << " variables bounded in ["
+            std::cout << "  Input bounds: " << lowerBounds.size( 0 ) << " variables bounded in ["
                       << lowerBounds.min().item<double>() << ", "
                       << upperBounds.max().item<double>() << "]" << std::endl;
         }
 
         // spec already stored via setSpecificationFromConstraints; don't pass to
         // compute_bounds again (would clear thresholds needed for isSpecVerified)
-        if (torchModel->hasSpecificationMatrix()) {
-            if (LunaConfiguration::VERBOSE) {
+        if ( torchModel->hasSpecificationMatrix() )
+        {
+            if ( LunaConfiguration::VERBOSE )
+            {
                 torch::Tensor C = torchModel->getSpecificationMatrix();
-                std::cout << "\nUsing specification matrix from VNN-LIB file with "
-                          << C.size(0) << " constraints" << std::endl;
+                std::cout << "\nUsing specification matrix from VNN-LIB file with " << C.size( 0 )
+                          << " constraints" << std::endl;
             }
-        } else {
-            if (LunaConfiguration::VERBOSE) {
-                std::cout << "\nNo output constraints found in VNN-LIB file, computing raw output bounds" << std::endl;
+        }
+        else
+        {
+            if ( LunaConfiguration::VERBOSE )
+            {
+                std::cout
+                    << "\nNo output constraints found in VNN-LIB file, computing raw output bounds"
+                    << std::endl;
             }
         }
 
         BoundedTensor<torch::Tensor> result;
 
         {
-            std::string method = (LunaConfiguration::ANALYSIS_METHOD == LunaConfiguration::AnalysisMethod::AlphaCROWN)
-                ? "alpha-crown" : "crown";
+            std::string method = ( LunaConfiguration::ANALYSIS_METHOD ==
+                                   LunaConfiguration::AnalysisMethod::AlphaCROWN )
+                                     ? "alpha-crown"
+                                     : "crown";
             std::cout << "Method:   " << method;
-            if (method == "alpha-crown") {
+            if ( method == "alpha-crown" )
+            {
                 std::cout << " (iters=" << LunaConfiguration::ALPHA_ITERATIONS
                           << ", lr=" << LunaConfiguration::ALPHA_LR
                           << ", lr_decay=" << LunaConfiguration::ALPHA_LR_DECAY
@@ -296,77 +351,86 @@ int lunaMain(int argc, char* argv[]) {
             std::cout << "Device:   " << LunaConfiguration::getDevice().str() << std::endl;
         }
 
-        if (LunaConfiguration::ANALYSIS_METHOD == LunaConfiguration::AnalysisMethod::AlphaCROWN) {
+        if ( LunaConfiguration::ANALYSIS_METHOD == LunaConfiguration::AnalysisMethod::AlphaCROWN )
+        {
             result = torchModel->compute_bounds(
-                inputBounds,
-                nullptr,
-                LunaConfiguration::AnalysisMethod::AlphaCROWN,
-                LunaConfiguration::COMPUTE_LOWER,
-                LunaConfiguration::COMPUTE_UPPER
-            );
-        } else {
+                inputBounds, nullptr, LunaConfiguration::AnalysisMethod::AlphaCROWN,
+                LunaConfiguration::COMPUTE_LOWER, LunaConfiguration::COMPUTE_UPPER );
+        }
+        else
+        {
             result = torchModel->compute_bounds(
-                inputBounds,
-                nullptr,
-                LunaConfiguration::AnalysisMethod::CROWN,
-                LunaConfiguration::COMPUTE_LOWER,
-                LunaConfiguration::COMPUTE_UPPER
-            );
+                inputBounds, nullptr, LunaConfiguration::AnalysisMethod::CROWN,
+                LunaConfiguration::COMPUTE_LOWER, LunaConfiguration::COMPUTE_UPPER );
         }
 
-        if (result.lower().defined() && result.upper().defined()) {
-            printBounds(result.lower(), result.upper());
-        } else {
+        if ( result.lower().defined() && result.upper().defined() )
+        {
+            printBounds( result.lower(), result.upper() );
+        }
+        else
+        {
             std::cerr << "ERROR: Bounds are undefined" << std::endl;
             return 1;
         }
 
         PropertyStatus status = PropertyStatus::Unknown;
         std::string statusDetail;
-        if (torchModel->hasSpecificationMatrix()) {
+        if ( torchModel->hasSpecificationMatrix() )
+        {
             NLR::CMatrixResult specResult = torchModel->getSpecificationMatrixResult();
-            status = evaluatePropertyStatus(specResult,
-                                            result.lower(),
-                                            result.upper(),
-                                            statusDetail);
-        } else {
+            status =
+                evaluatePropertyStatus( specResult, result.lower(), result.upper(), statusDetail );
+        }
+        else
+        {
             statusDetail = "no specification matrix set";
         }
 
         std::string statusLabel;
-        switch (status) {
-            case PropertyStatus::Unsat:
-                statusLabel = "unsat";
-                break;
-            case PropertyStatus::Sat:
-                statusLabel = "sat";
-                break;
-            case PropertyStatus::Unknown:
-            default:
-                statusLabel = "unknown";
-                break;
+        switch ( status )
+        {
+        case PropertyStatus::Unsat:
+            statusLabel = "unsat";
+            break;
+        case PropertyStatus::Sat:
+            statusLabel = "sat";
+            break;
+        case PropertyStatus::Unknown:
+        default:
+            statusLabel = "unknown";
+            break;
         }
 
         std::cout << "\nResult: " << statusLabel << std::endl;
 
         return 0;
-
-    } catch (const LunaError& e) {
+    }
+    catch ( const LunaError &e )
+    {
         std::cerr << "Error: " << e.getErrorClass() << " (code " << e.getCode() << ")" << std::endl;
-        if (e.getUserMessage() && strlen(e.getUserMessage()) > 0) {
+        if ( e.getUserMessage() && strlen( e.getUserMessage() ) > 0 )
+        {
             std::cerr << "Message: " << e.getUserMessage() << std::endl;
         }
         return 1;
-    } catch (const Error& e) {
+    }
+    catch ( const Error &e )
+    {
         std::cerr << "Error: " << e.getErrorClass() << " (code " << e.getCode() << ")" << std::endl;
-        if (e.getUserMessage() && strlen(e.getUserMessage()) > 0) {
+        if ( e.getUserMessage() && strlen( e.getUserMessage() ) > 0 )
+        {
             std::cerr << "Message: " << e.getUserMessage() << std::endl;
         }
         return 1;
-    } catch (const std::exception& e) {
+    }
+    catch ( const std::exception &e )
+    {
         std::cerr << "Error: " << e.what() << std::endl;
         return 1;
-    } catch (...) {
+    }
+    catch ( ... )
+    {
         std::cerr << "Error: Unknown exception occurred" << std::endl;
         return 1;
     }

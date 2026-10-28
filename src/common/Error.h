@@ -27,7 +27,8 @@ public:
     const char *what() const noexcept override;
 
 private:
-    enum {
+    enum
+    {
         BUFFER_SIZE = 2048,
     };
 

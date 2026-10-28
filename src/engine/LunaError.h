@@ -17,7 +17,8 @@
 class LunaError : public Error
 {
 public:
-    enum Code {
+    enum Code
+    {
         UNEXPECTED_TENSOR_SHAPE = 0,
         INVALID_NODE_TYPE = 1,
         INVALID_BOUND_COMPUTATION = 2,

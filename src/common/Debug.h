@@ -15,7 +15,6 @@
 #include <cstdlib>
 #include <stdio.h>
 
-
 #ifndef NDEBUG
 #define DEBUG( x ) x
 #else

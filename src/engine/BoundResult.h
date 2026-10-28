@@ -17,37 +17,57 @@
 #include <variant>
 #include "conv/Patches.h"
 
-namespace NLR {
+namespace NLR
+{
 
-class BoundA {
+class BoundA
+{
 public:
     std::variant<torch::Tensor, std::shared_ptr<Patches>> data;
 
-    BoundA() : data(torch::Tensor()) {}
-    BoundA(torch::Tensor t) : data(t) {}
-    BoundA(std::shared_ptr<Patches> p) : data(p) {}
-
-    bool isTensor() const {
-        return std::holds_alternative<torch::Tensor>(data);
+    BoundA()
+        : data( torch::Tensor() )
+    {
+    }
+    BoundA( torch::Tensor t )
+        : data( t )
+    {
+    }
+    BoundA( std::shared_ptr<Patches> p )
+        : data( p )
+    {
     }
 
-    bool isPatches() const {
-        return std::holds_alternative<std::shared_ptr<Patches>>(data);
+    bool isTensor() const
+    {
+        return std::holds_alternative<torch::Tensor>( data );
     }
 
-    torch::Tensor asTensor() const {
-        if (isTensor()) return std::get<torch::Tensor>(data);
+    bool isPatches() const
+    {
+        return std::holds_alternative<std::shared_ptr<Patches>>( data );
+    }
+
+    torch::Tensor asTensor() const
+    {
+        if ( isTensor() )
+            return std::get<torch::Tensor>( data );
         return torch::Tensor();
     }
 
-    std::shared_ptr<Patches> asPatches() const {
-        if (isPatches()) return std::get<std::shared_ptr<Patches>>(data);
+    std::shared_ptr<Patches> asPatches() const
+    {
+        if ( isPatches() )
+            return std::get<std::shared_ptr<Patches>>( data );
         return nullptr;
     }
 
-    bool defined() const {
-        if (isTensor()) return std::get<torch::Tensor>(data).defined();
-        if (isPatches()) return std::get<std::shared_ptr<Patches>>(data) != nullptr;
+    bool defined() const
+    {
+        if ( isTensor() )
+            return std::get<torch::Tensor>( data ).defined();
+        if ( isPatches() )
+            return std::get<std::shared_ptr<Patches>>( data ) != nullptr;
         return false;
     }
 };

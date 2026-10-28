@@ -130,7 +130,6 @@ const char *HeapData::asChar() const
     return (char *)_data;
 }
 
-
 bool HeapData::allocated() const
 {
     return _data != NULL;

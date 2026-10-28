@@ -23,7 +23,7 @@
 
 // restore CVC4 Warning macro
 #ifndef Warning
-#define Warning (! ::CVC4::WarningChannel.isOn()) ? ::CVC4::nullCvc4Stream : ::CVC4::WarningChannel
+#define Warning ( !::CVC4::WarningChannel.isOn() ) ? ::CVC4::nullCvc4Stream : ::CVC4::WarningChannel
 #endif
 
 template <class T = torch::Tensor> class BoundedTensor
@@ -31,9 +31,7 @@ template <class T = torch::Tensor> class BoundedTensor
     typedef std::pair<T, T> Super;
 
 public:
-    BoundedTensor()
-    {
-    }
+    BoundedTensor() {}
 
     BoundedTensor( const T &lower, const T &upper )
         : _container( lower, upper )
@@ -74,50 +72,63 @@ public:
 
     T width() const
     {
-        if constexpr (std::is_same_v<T, torch::Tensor>) {
+        if constexpr ( std::is_same_v<T, torch::Tensor> )
+        {
             return upper() - lower();
-        } else {
+        }
+        else
+        {
             return upper() - lower();
         }
     }
 
     T center() const
     {
-        if constexpr (std::is_same_v<T, torch::Tensor>) {
-            return (lower() + upper()) / 2.0;
-        } else {
-            return (lower() + upper()) / 2.0;
+        if constexpr ( std::is_same_v<T, torch::Tensor> )
+        {
+            return ( lower() + upper() ) / 2.0;
+        }
+        else
+        {
+            return ( lower() + upper() ) / 2.0;
         }
     }
 
     bool operator==( const BoundedTensor<T> &other ) const
     {
-        if constexpr (std::is_same_v<T, torch::Tensor>) {
-            return torch::all(torch::eq(lower(), other.lower())).template item<bool>() &&
-                   torch::all(torch::eq(upper(), other.upper())).template item<bool>();
-        } else {
+        if constexpr ( std::is_same_v<T, torch::Tensor> )
+        {
+            return torch::all( torch::eq( lower(), other.lower() ) ).template item<bool>() &&
+                   torch::all( torch::eq( upper(), other.upper() ) ).template item<bool>();
+        }
+        else
+        {
             return _container == other._container;
         }
     }
 
     bool operator!=( const BoundedTensor<T> &other ) const
     {
-        return !(*this == other);
+        return !( *this == other );
     }
 
     bool operator<( const BoundedTensor<T> &other ) const
     {
-        if constexpr (std::is_same_v<T, torch::Tensor>) {
+        if constexpr ( std::is_same_v<T, torch::Tensor> )
+        {
             T thisCenter = center();
             T otherCenter = other.center();
             T thisWidth = width();
             T otherWidth = other.width();
 
-            if (torch::all(torch::eq(thisCenter, otherCenter)).template item<bool>()) {
-                return torch::all(torch::lt(thisWidth, otherWidth)).template item<bool>();
+            if ( torch::all( torch::eq( thisCenter, otherCenter ) ).template item<bool>() )
+            {
+                return torch::all( torch::lt( thisWidth, otherWidth ) ).template item<bool>();
             }
-            return torch::all(torch::lt(thisCenter, otherCenter)).template item<bool>();
-        } else {
+            return torch::all( torch::lt( thisCenter, otherCenter ) ).template item<bool>();
+        }
+        else
+        {
             return _container < other._container;
         }
     }
@@ -126,7 +137,8 @@ protected:
     Super _container;
 };
 
-template <class T> std::ostream &operator<<( std::ostream &stream, const BoundedTensor<T> &boundedTensor )
+template <class T>
+std::ostream &operator<<( std::ostream &stream, const BoundedTensor<T> &boundedTensor )
 {
     return stream << "[" << boundedTensor.lower() << "," << boundedTensor.upper() << "]";
 }

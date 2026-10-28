@@ -92,13 +92,15 @@ else()
     # protobuf 3.19.x has cmake_minimum_required(VERSION 2.8.12)
     set(CMAKE_POLICY_VERSION_MINIMUM 3.5)
 
-    FetchContent_Declare(protobuf
-        URL https://github.com/protocolbuffers/protobuf/releases/download/v${PROTOBUF_VERSION}/protobuf-cpp-${PROTOBUF_VERSION}.tar.gz
+    set(PROTOBUF_URL "https://github.com/protocolbuffers/protobuf/releases/download")
+    set(PROTOBUF_URL "${PROTOBUF_URL}/v${PROTOBUF_VERSION}/protobuf-cpp-${PROTOBUF_VERSION}.tar.gz")
+    fetchcontent_declare(protobuf
+        URL ${PROTOBUF_URL}
         DOWNLOAD_EXTRACT_TIMESTAMP TRUE
         SOURCE_SUBDIR cmake
         EXCLUDE_FROM_ALL
     )
-    FetchContent_MakeAvailable(protobuf)
+    fetchcontent_makeavailable(protobuf)
 
     unset(CMAKE_POLICY_VERSION_MINIMUM)
 
@@ -191,22 +193,25 @@ endif()
 
 if(NOT Torch_FOUND AND NOT TORCH_PYTHON_PREFIX)
     if(LUNA_AUTO_DOWNLOAD)
+        set(LIBTORCH_BASE_URL "https://download.pytorch.org/libtorch")
         if(APPLE AND CMAKE_SYSTEM_PROCESSOR STREQUAL "arm64")
             set(LIBTORCH_URL "https://download.pytorch.org/libtorch/cpu/libtorch-macos-arm64-${PYTORCH_VERSION}.zip")
         elseif(APPLE)
             set(LIBTORCH_URL "https://download.pytorch.org/libtorch/cpu/libtorch-macos-x86_64-${PYTORCH_VERSION}.zip")
         elseif(LUNA_GPU)
-            set(LIBTORCH_URL "https://download.pytorch.org/libtorch/cu121/libtorch-cxx11-abi-shared-with-deps-${PYTORCH_VERSION}%2Bcu121.zip")
+            set(LIBTORCH_URL
+                "${LIBTORCH_BASE_URL}/cu121/libtorch-cxx11-abi-shared-with-deps-${PYTORCH_VERSION}%2Bcu121.zip")
         else()
-            set(LIBTORCH_URL "https://download.pytorch.org/libtorch/cpu/libtorch-cxx11-abi-shared-with-deps-${PYTORCH_VERSION}%2Bcpu.zip")
+            set(LIBTORCH_URL
+                "${LIBTORCH_BASE_URL}/cpu/libtorch-cxx11-abi-shared-with-deps-${PYTORCH_VERSION}%2Bcpu.zip")
         endif()
 
         message(STATUS "Downloading libtorch from ${LIBTORCH_URL}")
-        FetchContent_Declare(libtorch
+        fetchcontent_declare(libtorch
             URL ${LIBTORCH_URL}
             DOWNLOAD_EXTRACT_TIMESTAMP TRUE
         )
-        FetchContent_MakeAvailable(libtorch)
+        fetchcontent_makeavailable(libtorch)
         list(APPEND CMAKE_PREFIX_PATH ${libtorch_SOURCE_DIR})
     else()
         message(FATAL_ERROR
@@ -235,12 +240,12 @@ option(BUILD_PYTHON_BINDINGS "Build Python bindings using pybind11" ON)
 if(BUILD_PYTHON_BINDINGS)
   set(PYBIND11_VERSION ${LUNA_PYBIND11_VERSION})
 
-  FetchContent_Declare(pybind11
+  fetchcontent_declare(pybind11
       GIT_REPOSITORY https://github.com/pybind/pybind11.git
       GIT_TAG v${PYBIND11_VERSION}
       GIT_SHALLOW TRUE
   )
-  FetchContent_MakeAvailable(pybind11)
+  fetchcontent_makeavailable(pybind11)
   message(STATUS "Building Python bindings with pybind11")
 endif()
 
@@ -253,10 +258,11 @@ set(LUNA_ONNX_PARSER_LIB LUNAOnnxParser)
 set(BIN_DIR "${CMAKE_BINARY_DIR}/bin")
 
 # Compiler flags
-if (NOT MSVC)
-    if (CMAKE_CXX_COMPILER_ID MATCHES "Clang")
-        set(COMPILE_FLAGS -Wall -Wextra -MMD -Qunused-arguments -Wno-deprecated-declarations -Wno-unused-but-set-variable)
-    elseif (CMAKE_BUILD_TYPE MATCHES "Release")
+if(NOT MSVC)
+    if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+        set(COMPILE_FLAGS -Wall -Wextra -MMD -Qunused-arguments
+            -Wno-deprecated-declarations -Wno-unused-but-set-variable)
+    elseif(CMAKE_BUILD_TYPE MATCHES "Release")
         set(COMPILE_FLAGS -Wall)
     else()
         set(COMPILE_FLAGS -Wall -Wextra -MMD)
@@ -291,7 +297,7 @@ target_include_directories(${LUNA_LIB} PUBLIC
 )
 
 # Link libraries
-if (BUILD_STATIC_LUNA)
+if(BUILD_STATIC_LUNA)
   target_link_libraries(${LUNA_LIB} PUBLIC ${LIBS} -static)
 else()
   target_link_libraries(${LUNA_LIB} PUBLIC ${LIBS})
@@ -365,21 +371,21 @@ else()
 endif()
 
 if(BUILD_BENCHMARKS)
-    FetchContent_Declare(googlebenchmark
+    fetchcontent_declare(googlebenchmark
         GIT_REPOSITORY https://github.com/google/benchmark.git
         GIT_TAG v${LUNA_BENCHMARK_VERSION})
     set(BENCHMARK_ENABLE_TESTING OFF CACHE BOOL "" FORCE)
-    FetchContent_MakeAvailable(googlebenchmark)
+    fetchcontent_makeavailable(googlebenchmark)
 endif()
 
 if(BUILD_TESTS)
-    FetchContent_Declare(googletest
+    fetchcontent_declare(googletest
         GIT_REPOSITORY https://github.com/google/googletest.git
         GIT_TAG v${LUNA_GTEST_VERSION}
         GIT_SHALLOW TRUE
     )
     set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
-    FetchContent_MakeAvailable(googletest)
+    fetchcontent_makeavailable(googletest)
     enable_testing()
     add_subdirectory(tests)
 endif()

@@ -13,14 +13,16 @@
 #include "InputParserError.h"
 #include "MStringf.h"
 
-namespace NLR {
+namespace NLR
+{
 
 OutputConstraintSet::OutputConstraintSet()
-    : _outputDim(0), _hasORDisjunction(false)
+    : _outputDim( 0 )
+    , _hasORDisjunction( false )
 {
 }
 
-void OutputConstraintSet::setOutputDimension(unsigned dim)
+void OutputConstraintSet::setOutputDimension( unsigned dim )
 {
     _outputDim = dim;
 }
@@ -30,9 +32,9 @@ unsigned OutputConstraintSet::getOutputDimension() const
     return _outputDim;
 }
 
-void OutputConstraintSet::addConstraint(const OutputConstraint& constraint)
+void OutputConstraintSet::addConstraint( const OutputConstraint &constraint )
 {
-    _constraints.append(constraint);
+    _constraints.append( constraint );
 }
 
 unsigned OutputConstraintSet::getNumConstraints() const
@@ -52,9 +54,9 @@ void OutputConstraintSet::clear()
     _hasORDisjunction = false;
 }
 
-void OutputConstraintSet::addORBranch(const Vector<OutputConstraint>& branch)
+void OutputConstraintSet::addORBranch( const Vector<OutputConstraint> &branch )
 {
-    _orBranches.append(branch);
+    _orBranches.append( branch );
     _hasORDisjunction = true;
 }
 
@@ -72,61 +74,64 @@ CMatrixResult OutputConstraintSet::toCMatrix() const
 {
     CMatrixResult result;
 
-    if (_outputDim == 0)
+    if ( _outputDim == 0 )
     {
-        throw InputParserError(InputParserError::UNEXPECTED_INPUT,
-                               "Output dimension must be set before calling toCMatrix()");
+        throw InputParserError( InputParserError::UNEXPECTED_INPUT,
+                                "Output dimension must be set before calling toCMatrix()" );
     }
 
-    if (_hasORDisjunction)
+    if ( _hasORDisjunction )
     {
-        if (_orBranches.size() == 0)
+        if ( _orBranches.size() == 0 )
         {
-            throw InputParserError(InputParserError::UNEXPECTED_INPUT,
-                                   "OR disjunction flag is set but no branches exist");
+            throw InputParserError( InputParserError::UNEXPECTED_INPUT,
+                                    "OR disjunction flag is set but no branches exist" );
         }
 
         unsigned totalConstraints = 0;
-        for (unsigned branchId = 0; branchId < _orBranches.size(); ++branchId)
+        for ( unsigned branchId = 0; branchId < _orBranches.size(); ++branchId )
         {
             totalConstraints += _orBranches[branchId].size();
-            result.branchSizes.append(_orBranches[branchId].size());
+            result.branchSizes.append( _orBranches[branchId].size() );
         }
 
-        if (totalConstraints == 0)
+        if ( totalConstraints == 0 )
         {
-            throw InputParserError(InputParserError::UNEXPECTED_INPUT,
-                                   "No constraints in OR branches to convert to C matrix");
+            throw InputParserError( InputParserError::UNEXPECTED_INPUT,
+                                    "No constraints in OR branches to convert to C matrix" );
         }
 
-        result.C = torch::zeros({(long)totalConstraints, 1, (long)_outputDim}, torch::kFloat32);
-        result.thresholds = torch::zeros({(long)totalConstraints}, torch::kFloat32);
+        result.C = torch::zeros( { (long)totalConstraints, 1, (long)_outputDim }, torch::kFloat32 );
+        result.thresholds = torch::zeros( { (long)totalConstraints }, torch::kFloat32 );
         result.hasORBranches = true;
         unsigned rowIndex = 0;
-        for (unsigned branchId = 0; branchId < _orBranches.size(); ++branchId)
+        for ( unsigned branchId = 0; branchId < _orBranches.size(); ++branchId )
         {
-            const Vector<OutputConstraint>& branch = _orBranches[branchId];
-            for (unsigned i = 0; i < branch.size(); ++i)
+            const Vector<OutputConstraint> &branch = _orBranches[branchId];
+            for ( unsigned i = 0; i < branch.size(); ++i )
             {
-                const OutputConstraint& constraint = branch[i];
+                const OutputConstraint &constraint = branch[i];
 
-                for (unsigned j = 0; j < constraint.terms.size(); ++j)
+                for ( unsigned j = 0; j < constraint.terms.size(); ++j )
                 {
-                    const OutputTerm& term = constraint.terms[j];
+                    const OutputTerm &term = constraint.terms[j];
 
-                    if (term.outputIndex >= _outputDim)
+                    if ( term.outputIndex >= _outputDim )
                     {
-                        throw InputParserError(InputParserError::VARIABLE_INDEX_OUT_OF_RANGE,
-                                               Stringf("Output index %u exceeds output dimension %u",
-                                                       term.outputIndex, _outputDim).ascii());
+                        throw InputParserError(
+                            InputParserError::VARIABLE_INDEX_OUT_OF_RANGE,
+                            Stringf( "Output index %u exceeds output dimension %u",
+                                     term.outputIndex, _outputDim )
+                                .ascii() );
                     }
 
-                    result.C[rowIndex][0][term.outputIndex] = static_cast<float>(term.coefficient);
+                    result.C[rowIndex][0][term.outputIndex] =
+                        static_cast<float>( term.coefficient );
                 }
 
-                result.thresholds[rowIndex] = static_cast<float>(constraint.threshold);
+                result.thresholds[rowIndex] = static_cast<float>( constraint.threshold );
 
-                result.branchMapping.append(branchId);
+                result.branchMapping.append( branchId );
 
                 ++rowIndex;
             }
@@ -135,48 +140,49 @@ CMatrixResult OutputConstraintSet::toCMatrix() const
     else
     {
         unsigned numConstraints = _constraints.size();
-        if (numConstraints == 0)
+        if ( numConstraints == 0 )
         {
-            throw InputParserError(InputParserError::UNEXPECTED_INPUT,
-                                   "No constraints to convert to C matrix");
+            throw InputParserError( InputParserError::UNEXPECTED_INPUT,
+                                    "No constraints to convert to C matrix" );
         }
 
-        result.C = torch::zeros({(long)numConstraints, 1, (long)_outputDim}, torch::kFloat32);
-        result.thresholds = torch::zeros({(long)numConstraints}, torch::kFloat32);
+        result.C = torch::zeros( { (long)numConstraints, 1, (long)_outputDim }, torch::kFloat32 );
+        result.thresholds = torch::zeros( { (long)numConstraints }, torch::kFloat32 );
         result.hasORBranches = false;
 
-        for (unsigned i = 0; i < numConstraints; ++i)
+        for ( unsigned i = 0; i < numConstraints; ++i )
         {
-            const OutputConstraint& constraint = _constraints[i];
+            const OutputConstraint &constraint = _constraints[i];
 
             // Fill in coefficients for this constraint
-            for (unsigned j = 0; j < constraint.terms.size(); ++j)
+            for ( unsigned j = 0; j < constraint.terms.size(); ++j )
             {
-                const OutputTerm& term = constraint.terms[j];
+                const OutputTerm &term = constraint.terms[j];
 
-                if (term.outputIndex >= _outputDim)
+                if ( term.outputIndex >= _outputDim )
                 {
-                    throw InputParserError(InputParserError::VARIABLE_INDEX_OUT_OF_RANGE,
-                                           Stringf("Output index %u exceeds output dimension %u",
-                                                   term.outputIndex, _outputDim).ascii());
+                    throw InputParserError( InputParserError::VARIABLE_INDEX_OUT_OF_RANGE,
+                                            Stringf( "Output index %u exceeds output dimension %u",
+                                                     term.outputIndex, _outputDim )
+                                                .ascii() );
                 }
 
-                result.C[i][0][term.outputIndex] = static_cast<float>(term.coefficient);
+                result.C[i][0][term.outputIndex] = static_cast<float>( term.coefficient );
             }
 
             // Set threshold
-            result.thresholds[i] = static_cast<float>(constraint.threshold);
+            result.thresholds[i] = static_cast<float>( constraint.threshold );
         }
     }
 
     return result;
 }
 
-torch::Tensor OutputConstraintSet::identityC(unsigned outputDim)
+torch::Tensor OutputConstraintSet::identityC( unsigned outputDim )
 {
-    torch::Tensor C = torch::zeros({(long)outputDim, 1, (long)outputDim}, torch::kFloat32);
+    torch::Tensor C = torch::zeros( { (long)outputDim, 1, (long)outputDim }, torch::kFloat32 );
 
-    for (unsigned i = 0; i < outputDim; ++i)
+    for ( unsigned i = 0; i < outputDim; ++i )
     {
         C[i][0][i] = 1.0f;
     }
@@ -184,47 +190,48 @@ torch::Tensor OutputConstraintSet::identityC(unsigned outputDim)
     return C;
 }
 
-Vector<BranchResult> OutputConstraintSet::evaluateORBranches(
-    const torch::Tensor& lowerBounds,
-    const torch::Tensor& upperBounds,
-    const torch::Tensor& thresholds,
-    const Vector<unsigned>& branchMapping,
-    const Vector<unsigned>& branchSizes)
+Vector<BranchResult> OutputConstraintSet::evaluateORBranches( const torch::Tensor &lowerBounds,
+                                                              const torch::Tensor &upperBounds,
+                                                              const torch::Tensor &thresholds,
+                                                              const Vector<unsigned> &branchMapping,
+                                                              const Vector<unsigned> &branchSizes )
 {
     Vector<BranchResult> results;
 
-    if (branchSizes.size() == 0)
+    if ( branchSizes.size() == 0 )
     {
         return results;
     }
 
-    int totalRows = lowerBounds.size(0);
-    if (upperBounds.size(0) != totalRows || thresholds.size(0) != totalRows ||
-        (int)branchMapping.size() != totalRows)
+    int totalRows = lowerBounds.size( 0 );
+    if ( upperBounds.size( 0 ) != totalRows || thresholds.size( 0 ) != totalRows ||
+         (int)branchMapping.size() != totalRows )
     {
-        throw InputParserError(InputParserError::UNEXPECTED_INPUT,
-                               "Dimension mismatch in evaluateORBranches: all inputs must have same size");
+        throw InputParserError(
+            InputParserError::UNEXPECTED_INPUT,
+            "Dimension mismatch in evaluateORBranches: all inputs must have same size" );
     }
 
     Vector<Vector<unsigned>> branchRows;
-    for (unsigned branchId = 0; branchId < branchSizes.size(); ++branchId)
+    for ( unsigned branchId = 0; branchId < branchSizes.size(); ++branchId )
     {
-        branchRows.append(Vector<unsigned>());
+        branchRows.append( Vector<unsigned>() );
     }
 
-    for (int rowIndex = 0; rowIndex < totalRows; ++rowIndex)
+    for ( int rowIndex = 0; rowIndex < totalRows; ++rowIndex )
     {
         unsigned branchId = branchMapping[rowIndex];
-        if (branchId >= branchRows.size())
+        if ( branchId >= branchRows.size() )
         {
-            throw InputParserError(InputParserError::UNEXPECTED_INPUT,
-                                   Stringf("Branch ID %u out of range [0, %u)",
-                                           branchId, branchRows.size()).ascii());
+            throw InputParserError(
+                InputParserError::UNEXPECTED_INPUT,
+                Stringf( "Branch ID %u out of range [0, %u)", branchId, branchRows.size() )
+                    .ascii() );
         }
-        branchRows[branchId].append(static_cast<unsigned>(rowIndex));
+        branchRows[branchId].append( static_cast<unsigned>( rowIndex ) );
     }
 
-    for (unsigned branchId = 0; branchId < branchSizes.size(); ++branchId)
+    for ( unsigned branchId = 0; branchId < branchSizes.size(); ++branchId )
     {
         BranchResult branchResult;
         branchResult.branchId = branchId;
@@ -232,21 +239,22 @@ Vector<BranchResult> OutputConstraintSet::evaluateORBranches(
         branchResult.refuted = false;
         branchResult.rowIndices = branchRows[branchId];
 
-        if (branchRows[branchId].size() == 0)
+        if ( branchRows[branchId].size() == 0 )
         {
-            results.append(branchResult);
+            results.append( branchResult );
             continue;
         }
 
         // lb > threshold disproves the AND-conjunction for this branch
         bool branchDisproved = false;
-        for (unsigned i = 0; i < branchRows[branchId].size(); ++i)
+        for ( unsigned i = 0; i < branchRows[branchId].size(); ++i )
         {
             unsigned rowIndex = branchRows[branchId][i];
 
-            float lowerDiff = lowerBounds[rowIndex].item<float>() - thresholds[rowIndex].item<float>();
+            float lowerDiff =
+                lowerBounds[rowIndex].item<float>() - thresholds[rowIndex].item<float>();
 
-            if (lowerDiff > 0.0f)
+            if ( lowerDiff > 0.0f )
             {
                 branchDisproved = true;
                 break;
@@ -256,13 +264,14 @@ Vector<BranchResult> OutputConstraintSet::evaluateORBranches(
 
         // ub <= threshold on all rows means counterexample is always satisfiable
         bool branchAlwaysSatisfiable = true;
-        for (unsigned i = 0; i < branchRows[branchId].size(); ++i)
+        for ( unsigned i = 0; i < branchRows[branchId].size(); ++i )
         {
             unsigned rowIndex = branchRows[branchId][i];
 
-            float upperDiff = upperBounds[rowIndex].item<float>() - thresholds[rowIndex].item<float>();
+            float upperDiff =
+                upperBounds[rowIndex].item<float>() - thresholds[rowIndex].item<float>();
 
-            if (upperDiff > 0.0f)
+            if ( upperDiff > 0.0f )
             {
                 branchAlwaysSatisfiable = false;
                 break;
@@ -270,7 +279,7 @@ Vector<BranchResult> OutputConstraintSet::evaluateORBranches(
         }
         branchResult.refuted = branchAlwaysSatisfiable;
 
-        results.append(branchResult);
+        results.append( branchResult );
     }
 
     return results;

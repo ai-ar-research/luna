@@ -25,7 +25,8 @@
 
 #include <torch/torch.h>
 
-namespace NLR {
+namespace NLR
+{
 
 struct OutputTerm
 {
@@ -33,12 +34,14 @@ struct OutputTerm
     double coefficient;
 
     OutputTerm()
-        : outputIndex(0), coefficient(1.0)
+        : outputIndex( 0 )
+        , coefficient( 1.0 )
     {
     }
 
-    OutputTerm(unsigned index, double coeff = 1.0)
-        : outputIndex(index), coefficient(coeff)
+    OutputTerm( unsigned index, double coeff = 1.0 )
+        : outputIndex( index )
+        , coefficient( coeff )
     {
     }
 };
@@ -50,7 +53,7 @@ struct OutputConstraint
     double threshold;
 
     OutputConstraint()
-        : threshold(0.0)
+        : threshold( 0.0 )
     {
     }
 };
@@ -64,7 +67,7 @@ struct CMatrixResult
     bool hasORBranches;
 
     CMatrixResult()
-        : hasORBranches(false)
+        : hasORBranches( false )
     {
     }
 };
@@ -82,28 +85,26 @@ class OutputConstraintSet
 public:
     OutputConstraintSet();
 
-    void setOutputDimension(unsigned dim);
+    void setOutputDimension( unsigned dim );
     unsigned getOutputDimension() const;
-    void addConstraint(const OutputConstraint& constraint);
+    void addConstraint( const OutputConstraint &constraint );
     unsigned getNumConstraints() const;
     bool hasConstraints() const;
     void clear();
-    void addORBranch(const Vector<OutputConstraint>& branch);
+    void addORBranch( const Vector<OutputConstraint> &branch );
     bool hasORDisjunction() const;
     unsigned getNumORBranches() const;
 
     // negates coefficients/thresholds to match auto-LiRPA convention
     CMatrixResult toCMatrix() const;
 
-    static Vector<BranchResult> evaluateORBranches(
-        const torch::Tensor& lowerBounds,
-        const torch::Tensor& upperBounds,
-        const torch::Tensor& thresholds,
-        const Vector<unsigned>& branchMapping,
-        const Vector<unsigned>& branchSizes
-    );
+    static Vector<BranchResult> evaluateORBranches( const torch::Tensor &lowerBounds,
+                                                    const torch::Tensor &upperBounds,
+                                                    const torch::Tensor &thresholds,
+                                                    const Vector<unsigned> &branchMapping,
+                                                    const Vector<unsigned> &branchSizes );
 
-    static torch::Tensor identityC(unsigned outputDim);
+    static torch::Tensor identityC( unsigned outputDim );
 
 private:
     unsigned _outputDim;

@@ -43,13 +43,25 @@ class AlphaCROWNAnalysis;
 #include <unordered_set>
 #include <vector>
 
-namespace NLR {
+namespace NLR
+{
 
 /// \brief Mathematical operation kinds accepted by the tensor graph interface.
-enum class TorchGraphOperation { Input, Relu, Add, Flatten, Linear, Conv2d, BatchNorm, Unsupported };
+enum class TorchGraphOperation
+{
+    Input,
+    Relu,
+    Add,
+    Flatten,
+    Linear,
+    Conv2d,
+    BatchNorm,
+    Unsupported
+};
 
 /// \brief One operation in a topologically ordered tensor computation graph.
-struct TorchGraphNode {
+struct TorchGraphNode
+{
     /// \brief Stable graph-local node index.
     unsigned index = 0;
     /// \brief Stable source tensor name used to map bounds back to the caller.
@@ -84,132 +96,160 @@ struct TorchGraphNode {
 };
 
 /// \brief Operation-neutral graph passed from an embedding verifier to Luna.
-struct TorchComputationGraph {
+struct TorchComputationGraph
+{
     std::vector<TorchGraphNode> nodes;
     unsigned input_index = 0;
     unsigned output_index = 0;
 };
 
-class TorchModel {
+class TorchModel
+{
 public:
-    TorchModel(const Vector<std::shared_ptr<BoundedTorchNode>>& nodes,
-               const Vector<unsigned>& inputIndices,
-               unsigned outputIndex,
-               const Map<unsigned, Vector<unsigned>>& dependencies);
+    TorchModel( const Vector<std::shared_ptr<BoundedTorchNode>> &nodes,
+                const Vector<unsigned> &inputIndices, unsigned outputIndex,
+                const Map<unsigned, Vector<unsigned>> &dependencies );
 
     /// \brief Create a Luna model from an operation-neutral tensor graph.
-    static std::shared_ptr<TorchModel> fromGraph(const TorchComputationGraph& graph);
+    static std::shared_ptr<TorchModel> fromGraph( const TorchComputationGraph &graph );
 
-    TorchModel(const String& onnxPath);
+    TorchModel( const String &onnxPath );
 
-    TorchModel(const String& onnxPath,
-               const String& vnnlibPath);
+    TorchModel( const String &onnxPath, const String &vnnlibPath );
 
-    torch::Tensor forward(const torch::Tensor& input);
-    torch::Tensor forward(unsigned nodeIndex, Map<unsigned, torch::Tensor>& activations,
-                         const Map<unsigned, torch::Tensor>& inputs);
+    torch::Tensor forward( const torch::Tensor &input );
+    torch::Tensor forward( unsigned nodeIndex, Map<unsigned, torch::Tensor> &activations,
+                           const Map<unsigned, torch::Tensor> &inputs );
 
-    Map<unsigned, torch::Tensor> forwardAndStoreActivations(const torch::Tensor& input);
-    Map<unsigned, torch::Tensor> forwardAndStoreActivations(const Map<unsigned, torch::Tensor>& inputs);
+    Map<unsigned, torch::Tensor> forwardAndStoreActivations( const torch::Tensor &input );
+    Map<unsigned, torch::Tensor>
+    forwardAndStoreActivations( const Map<unsigned, torch::Tensor> &inputs );
 
-    unsigned getInputSize() const { return _input_size; }
-    unsigned getOutputSize() const { return _output_size; }
-    unsigned getNumNodes() const { return _nodes.size(); }
-    torch::Device getDevice() const { return _device; }
-    void moveToDevice(const torch::Device& device);
+    unsigned getInputSize() const
+    {
+        return _input_size;
+    }
+    unsigned getOutputSize() const
+    {
+        return _output_size;
+    }
+    unsigned getNumNodes() const
+    {
+        return _nodes.size();
+    }
+    torch::Device getDevice() const
+    {
+        return _device;
+    }
+    void moveToDevice( const torch::Device &device );
 
-    const Vector<std::shared_ptr<BoundedTorchNode>>& getNodes() const { return _nodes; }
-    std::shared_ptr<BoundedTorchNode> getNode(unsigned index) const;
+    const Vector<std::shared_ptr<BoundedTorchNode>> &getNodes() const
+    {
+        return _nodes;
+    }
+    std::shared_ptr<BoundedTorchNode> getNode( unsigned index ) const;
     Vector<unsigned> getAllNodeIndices() const;
-    Vector<unsigned> getNodesByType(NodeType type) const;
-    const Vector<unsigned>& getInputIndices() const { return _inputIndices; }
-    unsigned getOutputIndex() const { return _outputIndex; }
+    Vector<unsigned> getNodesByType( NodeType type ) const;
+    const Vector<unsigned> &getInputIndices() const
+    {
+        return _inputIndices;
+    }
+    unsigned getOutputIndex() const
+    {
+        return _outputIndex;
+    }
 
-    void setInputBounds(const BoundedTensor<torch::Tensor>& inputBounds);
+    void setInputBounds( const BoundedTensor<torch::Tensor> &inputBounds );
 
-    void setConcreteBounds(unsigned nodeIndex, const BoundedTensor<torch::Tensor>& concreteBounds);
+    void setConcreteBounds( unsigned nodeIndex,
+                            const BoundedTensor<torch::Tensor> &concreteBounds );
     void clearConcreteBounds();
-    BoundedTensor<torch::Tensor> getConcreteBounds(unsigned nodeIndex) const;
-    bool hasConcreteBounds(unsigned nodeIndex) const;
+    BoundedTensor<torch::Tensor> getConcreteBounds( unsigned nodeIndex ) const;
+    bool hasConcreteBounds( unsigned nodeIndex ) const;
 
     BoundedTensor<torch::Tensor> getInputBounds() const;
     bool hasInputBounds() const;
     torch::Tensor getInputLowerBounds() const;
     torch::Tensor getInputUpperBounds() const;
 
-    void setSpecificationMatrix(const torch::Tensor& specMatrix);
-    void setSpecificationFromConstraints(const OutputConstraintSet& constraints);
+    void setSpecificationMatrix( const torch::Tensor &specMatrix );
+    void setSpecificationFromConstraints( const OutputConstraintSet &constraints );
     torch::Tensor getSpecificationMatrix() const;
     torch::Tensor getSpecificationThresholds() const;
     CMatrixResult getSpecificationMatrixResult() const;
     bool hasSpecificationMatrix() const;
-    bool isSpecVerified(const torch::Tensor& lb, const torch::Tensor& ub) const;
+    bool isSpecVerified( const torch::Tensor &lb, const torch::Tensor &ub ) const;
 
     BoundedTensor<torch::Tensor> compute_bounds(
-        const BoundedTensor<torch::Tensor>& input_bounds,
-        const torch::Tensor* specification_matrix = nullptr,
+        const BoundedTensor<torch::Tensor> &input_bounds,
+        const torch::Tensor *specification_matrix = nullptr,
         LunaConfiguration::AnalysisMethod method = LunaConfiguration::AnalysisMethod::CROWN,
-        bool bound_lower = true,
-        bool bound_upper = true
-    );
+        bool bound_lower = true, bool bound_upper = true );
 
     BoundedTensor<torch::Tensor> runCROWN();
-    BoundedTensor<torch::Tensor> runCROWN(const BoundedTensor<torch::Tensor>& inputBounds);
-    BoundedTensor<torch::Tensor> runIBP(const BoundedTensor<torch::Tensor>& inputBounds);
+    BoundedTensor<torch::Tensor> runCROWN( const BoundedTensor<torch::Tensor> &inputBounds );
+    BoundedTensor<torch::Tensor> runIBP( const BoundedTensor<torch::Tensor> &inputBounds );
 
-    BoundedTensor<torch::Tensor> runAlphaCROWN(bool optimizeLower = true, bool optimizeUpper = false);
-    BoundedTensor<torch::Tensor> runAlphaCROWN(const BoundedTensor<torch::Tensor>& inputBounds,
-                                                bool optimizeLower = true, bool optimizeUpper = false);
+    BoundedTensor<torch::Tensor> runAlphaCROWN( bool optimizeLower = true,
+                                                bool optimizeUpper = false );
+    BoundedTensor<torch::Tensor> runAlphaCROWN( const BoundedTensor<torch::Tensor> &inputBounds,
+                                                bool optimizeLower = true,
+                                                bool optimizeUpper = false );
 
-    void setCROWNBounds(unsigned nodeIndex, const BoundedTensor<torch::Tensor>& bounds);
-    void setAlphaCROWNBounds(unsigned nodeIndex, const BoundedTensor<torch::Tensor>& bounds);
-    BoundedTensor<torch::Tensor> getCROWNBounds(unsigned nodeIndex) const;
-    BoundedTensor<torch::Tensor> getAlphaCROWNBounds(unsigned nodeIndex) const;
-    bool hasCROWNBounds(unsigned nodeIndex) const;
-    bool hasAlphaCROWNBounds(unsigned nodeIndex) const;
+    void setCROWNBounds( unsigned nodeIndex, const BoundedTensor<torch::Tensor> &bounds );
+    void setAlphaCROWNBounds( unsigned nodeIndex, const BoundedTensor<torch::Tensor> &bounds );
+    BoundedTensor<torch::Tensor> getCROWNBounds( unsigned nodeIndex ) const;
+    BoundedTensor<torch::Tensor> getAlphaCROWNBounds( unsigned nodeIndex ) const;
+    bool hasCROWNBounds( unsigned nodeIndex ) const;
+    bool hasAlphaCROWNBounds( unsigned nodeIndex ) const;
 
-    void setFinalAnalysisBounds(const BoundedTensor<torch::Tensor>& bounds);
+    void setFinalAnalysisBounds( const BoundedTensor<torch::Tensor> &bounds );
     BoundedTensor<torch::Tensor> getFinalAnalysisBounds() const;
     bool hasFinalAnalysisBounds() const;
 
-    struct BaBState {
+    struct BaBState
+    {
         std::unordered_map<unsigned, std::pair<torch::Tensor, torch::Tensor>> allBounds;
-        std::unordered_map<unsigned,
-            std::unordered_map<std::string, AlphaParameters>> alphas;
+        std::unordered_map<unsigned, std::unordered_map<std::string, AlphaParameters>> alphas;
     };
 
-    void loadState(
-        const BoundedTensor<torch::Tensor>& inputBounds,
-        const std::unordered_map<unsigned, std::pair<torch::Tensor, torch::Tensor>>& intermediateBounds,
-        const std::unordered_map<unsigned,
-            std::unordered_map<std::string, AlphaParameters>>& alphas);
-    void loadProp(const torch::Tensor& C);
+    void
+    loadState( const BoundedTensor<torch::Tensor> &inputBounds,
+               const std::unordered_map<unsigned, std::pair<torch::Tensor, torch::Tensor>>
+                   &intermediateBounds,
+               const std::unordered_map<unsigned, std::unordered_map<std::string, AlphaParameters>>
+                   &alphas );
+    void loadProp( const torch::Tensor &C );
     BaBState getState() const;
 
     void persistAlphas(
-        const std::unordered_map<unsigned,
-            std::unordered_map<std::string, AlphaParameters>>& alphas);
+        const std::unordered_map<unsigned, std::unordered_map<std::string, AlphaParameters>>
+            &alphas );
     void persistIntermediateBounds(
-        const std::unordered_map<unsigned, std::pair<torch::Tensor, torch::Tensor>>& bounds);
+        const std::unordered_map<unsigned, std::pair<torch::Tensor, torch::Tensor>> &bounds );
     bool hasPersistedAlphas() const;
     bool hasPersistedIntermediateBounds() const;
-    const std::unordered_map<unsigned,
-        std::unordered_map<std::string, AlphaParameters>>& getPersistedAlphas() const;
-    const std::unordered_map<unsigned,
-        std::pair<torch::Tensor, torch::Tensor>>& getPersistedIntermediateBounds() const;
-    struct ForwardBoundWorkStats {
-        std::size_t recomputedNodes{0};
-        std::size_t reusedNodes{0};
+    const std::unordered_map<unsigned, std::unordered_map<std::string, AlphaParameters>> &
+    getPersistedAlphas() const;
+    const std::unordered_map<unsigned, std::pair<torch::Tensor, torch::Tensor>> &
+    getPersistedIntermediateBounds() const;
+    struct ForwardBoundWorkStats
+    {
+        std::size_t recomputedNodes{ 0 };
+        std::size_t reusedNodes{ 0 };
     };
-    void setDirtyNodeIndices(const std::vector<unsigned>& nodeIndices);
-    bool isIncrementalNodeDirty(unsigned nodeIndex) const;
-    void setForwardBoundWorkStats(std::size_t recomputed, std::size_t reused);
-    const ForwardBoundWorkStats& getForwardBoundWorkStats() const;
+    void setDirtyNodeIndices( const std::vector<unsigned> &nodeIndices );
+    bool isIncrementalNodeDirty( unsigned nodeIndex ) const;
+    void setForwardBoundWorkStats( std::size_t recomputed, std::size_t reused );
+    const ForwardBoundWorkStats &getForwardBoundWorkStats() const;
     // Center forward passes actually run, since repeated input boxes reuse the cached shapes
     std::size_t getShapeCachePassCount() const;
     void clearPersistedState();
 
-    const Map<unsigned, Vector<unsigned>>& getDependenciesMap() const { return _dependencies; }
+    const Map<unsigned, Vector<unsigned>> &getDependenciesMap() const
+    {
+        return _dependencies;
+    }
 
     void buildDependencyGraph();
     void buildDependents();
@@ -218,16 +258,16 @@ public:
     Vector<unsigned> topologicalSort() const;
     Vector<unsigned> getRoots() const;
     Vector<unsigned> getLeaves() const;
-    Vector<unsigned> getDependents(unsigned nodeIndex) const;
-    Vector<unsigned> getDependencies(unsigned nodeIndex) const;
+    Vector<unsigned> getDependents( unsigned nodeIndex ) const;
+    Vector<unsigned> getDependencies( unsigned nodeIndex ) const;
 
-    unsigned getDegreeOut(unsigned nodeIndex) const;
-    unsigned getDegreeIn(unsigned nodeIndex) const;
+    unsigned getDegreeOut( unsigned nodeIndex ) const;
+    unsigned getDegreeIn( unsigned nodeIndex ) const;
     void resetProcessingState();
-    bool isProcessed(unsigned nodeIndex) const;
-    void markProcessed(unsigned nodeIndex);
+    bool isProcessed( unsigned nodeIndex ) const;
+    void markProcessed( unsigned nodeIndex );
 
-    void log(const String& message) const;
+    void log( const String &message ) const;
 
 private:
     Vector<std::shared_ptr<BoundedTorchNode>> _nodes;
@@ -257,19 +297,18 @@ private:
     BoundedTensor<torch::Tensor> _finalAnalysisBounds;
     bool _hasFinalAnalysisBounds;
 
-    std::unordered_map<unsigned,
-        std::unordered_map<std::string, AlphaParameters>> _persistedAlphas;
-    bool _hasPersistedAlphas{false};
-    std::unordered_map<unsigned,
-        std::pair<torch::Tensor, torch::Tensor>> _persistedIntermediateBounds;
-    bool _hasPersistedIntermediateBounds{false};
+    std::unordered_map<unsigned, std::unordered_map<std::string, AlphaParameters>> _persistedAlphas;
+    bool _hasPersistedAlphas{ false };
+    std::unordered_map<unsigned, std::pair<torch::Tensor, torch::Tensor>>
+        _persistedIntermediateBounds;
+    bool _hasPersistedIntermediateBounds{ false };
     std::unordered_set<unsigned> _dirtyNodeIndices;
     ForwardBoundWorkStats _forwardBoundWorkStats;
     // Input-box center whose forward pass last populated the node shape caches
     torch::Tensor _shapeCacheCenter;
     std::size_t _shapeCachePasses = 0;
 
-    void validateNodeIndex(unsigned nodeIndex) const;
+    void validateNodeIndex( unsigned nodeIndex ) const;
     void cacheForwardShapesFromCenter();
     void resetAnalysisState();
 

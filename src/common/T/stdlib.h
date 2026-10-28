@@ -14,26 +14,32 @@
 
 #include <cstdlib>
 
-namespace T {
-    inline void* malloc(size_t size) {
-        return ::malloc(size);
-    }
-
-    inline void free(void* ptr) {
-        ::free(ptr);
-    }
-
-    inline void* realloc(void* ptr, size_t size) {
-        return ::realloc(ptr, size);
-    }
-
-    inline void srand(unsigned seed) {
-        ::srand(seed);
-    }
-
-    inline int rand() {
-        return ::rand();
-    }
+namespace T
+{
+inline void *malloc( size_t size )
+{
+    return ::malloc( size );
 }
+
+inline void free( void *ptr )
+{
+    ::free( ptr );
+}
+
+inline void *realloc( void *ptr, size_t size )
+{
+    return ::realloc( ptr, size );
+}
+
+inline void srand( unsigned seed )
+{
+    ::srand( seed );
+}
+
+inline int rand()
+{
+    return ::rand();
+}
+} // namespace T
 
 #endif // __T__Stdlib_h__

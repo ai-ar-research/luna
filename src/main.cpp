@@ -11,6 +11,7 @@
 
 #include "engine/LunaMain.h"
 
-int main(int argc, char** argv) {
-    return lunaMain(argc, argv);
+int main( int argc, char **argv )
+{
+    return lunaMain( argc, argv );
 }

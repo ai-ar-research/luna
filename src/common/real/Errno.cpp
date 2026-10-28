@@ -11,7 +11,8 @@
 
 #include <errno.h>
 
-namespace T {
+namespace T
+{
 int errorNumber()
 {
     return errno;

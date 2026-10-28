@@ -14,18 +14,20 @@
 
 #include <torch/torch.h>
 
-namespace NLR {
+namespace NLR
+{
 
-struct AlphaParameters {
+struct AlphaParameters
+{
     torch::Tensor alpha;
     torch::Tensor unstableMask;
     torch::Tensor unstableIndices;
-    int specDim{0};
-    int batchDim{1};
-    int outDim{0};
-    int numUnstable{0};
-    bool requiresGrad{true};
-    bool hasSpecDefaultSlot{false};
+    int specDim{ 0 };
+    int batchDim{ 1 };
+    int outDim{ 0 };
+    int numUnstable{ 0 };
+    bool requiresGrad{ true };
+    bool hasSpecDefaultSlot{ false };
 };
 
 } // namespace NLR

@@ -16,42 +16,42 @@ def main():
     print("="*60)
     print("Example 1: Basic Usage")
     print("="*60)
-    
+
     # Paths to test resources (relative to repo root)
     repo_root = Path(__file__).parent.parent.parent
     onnx_path = str(repo_root / "resources" / "onnx" / "spec_test.onnx")
     vnnlib_path = str(repo_root / "resources" / "properties" / "spec_test.vnnlib")
-    
+
     print(f"\n1. Loading model...")
     print(f"   ONNX: {onnx_path}")
     print(f"   VNN-LIB: {vnnlib_path}")
-    
+
     # Create model (bounds loaded automatically from VNN-LIB)
     model = TorchModel(onnx_path, vnnlib_path)
-    
+
     print(f"\n2. Model information:")
     print(f"   Input size: {model.getInputSize()}")
     print(f"   Output size: {model.getOutputSize()}")
     print(f"   Number of nodes: {model.getNumNodes()}")
     print(f"   Has input bounds: {model.hasInputBounds()}")
-    
+
     # Check what bounds were loaded
     if model.hasInputBounds():
         bounds = model.getInputBounds()
         print(f"\n3. Input bounds from VNN-LIB:")
         print(f"   Lower: {bounds.lower()[:5]}... (showing first 5)")
         print(f"   Upper: {bounds.upper()[:5]}... (showing first 5)")
-    
+
     print(f"\n4. Running CROWN analysis...")
-    
+
     # Compute output bounds using CROWN
     result = model.compute_bounds(method='CROWN')
-    
+
     print(f"\n5. Results:")
     print(f"   Output lower bounds: {result.lower()}")
     print(f"   Output upper bounds: {result.upper()}")
     print(f"   Bound width: {result.upper() - result.lower()}")
-    
+
     print(f"\n6. Analysis complete")
     print("="*60)
 

@@ -30,48 +30,70 @@
 #include "Debug.h"
 
 #ifndef Warning
-#define Warning (! ::CVC4::WarningChannel.isOn()) ? ::CVC4::nullCvc4Stream : ::CVC4::WarningChannel
+#define Warning ( !::CVC4::WarningChannel.isOn() ) ? ::CVC4::nullCvc4Stream : ::CVC4::WarningChannel
 #endif
 
-namespace NLR {
+namespace NLR
+{
 
 class AlphaCROWNAnalysis;
 
 class BoundedAlphaOptimizeNode : public BoundedTorchNode
 {
 public:
-    BoundedAlphaOptimizeNode() : _alphaCrownAnalysis(nullptr), _optimizationStage("") {}
+    BoundedAlphaOptimizeNode()
+        : _alphaCrownAnalysis( nullptr )
+        , _optimizationStage( "" )
+    {
+    }
 
     virtual ~BoundedAlphaOptimizeNode() {}
 
-    void setAlphaCrownAnalysis(AlphaCROWNAnalysis* analysis) { _alphaCrownAnalysis = analysis; }
-    AlphaCROWNAnalysis* getAlphaCrownAnalysis() const { return _alphaCrownAnalysis; }
-    bool isAlphaOptimizationEnabled() const { return _alphaCrownAnalysis != nullptr; }
+    void setAlphaCrownAnalysis( AlphaCROWNAnalysis *analysis )
+    {
+        _alphaCrownAnalysis = analysis;
+    }
+    AlphaCROWNAnalysis *getAlphaCrownAnalysis() const
+    {
+        return _alphaCrownAnalysis;
+    }
+    bool isAlphaOptimizationEnabled() const
+    {
+        return _alphaCrownAnalysis != nullptr;
+    }
 
     bool isOptimizingLower() const;
     bool isOptimizingUpper() const;
     bool isOptimizingBoth() const;
 
-    std::string getOptimizationStage() const { return _optimizationStage; }
-    void setOptimizationStage(const std::string& stage) { _optimizationStage = stage; }
+    std::string getOptimizationStage() const
+    {
+        return _optimizationStage;
+    }
+    void setOptimizationStage( const std::string &stage )
+    {
+        _optimizationStage = stage;
+    }
 
-    torch::Tensor getInitD() const { return init_d; }
-    bool hasInitD() const { return init_d.defined() && init_d.numel() > 0; }
+    torch::Tensor getInitD() const
+    {
+        return init_d;
+    }
+    bool hasInitD() const
+    {
+        return init_d.defined() && init_d.numel() > 0;
+    }
 
-    virtual void computeAlphaRelaxation(
-        const torch::Tensor& last_lA,
-        const torch::Tensor& last_uA,
-        const torch::Tensor& input_lower,
-        const torch::Tensor& input_upper,
-        torch::Tensor& d_lower,
-        torch::Tensor& d_upper,
-        torch::Tensor& bias_lower,
-        torch::Tensor& bias_upper) = 0;
+    virtual void computeAlphaRelaxation( const torch::Tensor &last_lA, const torch::Tensor &last_uA,
+                                         const torch::Tensor &input_lower,
+                                         const torch::Tensor &input_upper, torch::Tensor &d_lower,
+                                         torch::Tensor &d_upper, torch::Tensor &bias_lower,
+                                         torch::Tensor &bias_upper ) = 0;
 
-    virtual torch::Tensor getCROWNSlope(bool isLowerBound) const = 0;
+    virtual torch::Tensor getCROWNSlope( bool isLowerBound ) const = 0;
 
 protected:
-    AlphaCROWNAnalysis* _alphaCrownAnalysis;
+    AlphaCROWNAnalysis *_alphaCrownAnalysis;
 
     // "init", "opt", "reuse", or ""
     std::string _optimizationStage;
@@ -79,16 +101,22 @@ protected:
     // CROWN slopes from init stage become alpha initialization values
     torch::Tensor init_d;
 
-    void storeInitD(const torch::Tensor& crown_slopes) {
-        if (crown_slopes.defined() && crown_slopes.numel() > 0) {
+    void storeInitD( const torch::Tensor &crown_slopes )
+    {
+        if ( crown_slopes.defined() && crown_slopes.numel() > 0 )
+        {
             init_d = crown_slopes.detach().clone();
-        } else {
-            log(Stringf("storeInitD() - Warning: Invalid CROWN slopes for node %u", getNodeIndex()));
+        }
+        else
+        {
+            log( Stringf( "storeInitD() - Warning: Invalid CROWN slopes for node %u",
+                          getNodeIndex() ) );
         }
     }
 
 private:
-    void log(const String& message) {
+    void log( const String &message )
+    {
         (void)message;
     }
 };

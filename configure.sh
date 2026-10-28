@@ -7,7 +7,7 @@ GPU_MODE="OFF"
 AUTO_DOWNLOAD="OFF"
 BUILD_TESTS="ON"
 BUILD_PYTHON="ON"
-EXTRA_CMAKE_ARGS=""
+EXTRA_CMAKE_ARGS=()
 
 usage() {
     cat <<EOF
@@ -36,7 +36,7 @@ while [[ $# -gt 0 ]]; do
         --no-tests)     BUILD_TESTS="OFF"; shift ;;
         --no-python)    BUILD_PYTHON="OFF"; shift ;;
         -h|--help)      usage ;;
-        *)              EXTRA_CMAKE_ARGS="$EXTRA_CMAKE_ARGS $1"; shift ;;
+        *)              EXTRA_CMAKE_ARGS+=("$1"); shift ;;
     esac
 done
 
@@ -51,9 +51,9 @@ if [[ "$GPU_MODE" == "OFF" ]]; then
 fi
 
 # Prefer Ninja if available
-GENERATOR_ARGS=""
+GENERATOR_ARGS=()
 if command -v ninja &>/dev/null; then
-    GENERATOR_ARGS="-G Ninja"
+    GENERATOR_ARGS=(-G Ninja)
 fi
 
 echo "=== Luna Build Configuration ==="
@@ -63,7 +63,7 @@ echo "  GPU mode:        ${GPU_MODE}"
 echo "  Auto-download:   ${AUTO_DOWNLOAD}"
 echo "  Tests:           ${BUILD_TESTS}"
 echo "  Python bindings: ${BUILD_PYTHON}"
-if [[ -n "$GENERATOR_ARGS" ]]; then
+if [[ ${#GENERATOR_ARGS[@]} -gt 0 ]]; then
     echo "  Generator:       Ninja"
 else
     echo "  Generator:       Make"
@@ -71,14 +71,14 @@ fi
 echo "================================="
 
 cmake -B "${BUILD_DIR}" \
-    ${GENERATOR_ARGS} \
+    "${GENERATOR_ARGS[@]}" \
     -DCMAKE_BUILD_TYPE="${BUILD_TYPE}" \
     -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
     -DLUNA_GPU="${GPU_MODE}" \
     -DLUNA_AUTO_DOWNLOAD="${AUTO_DOWNLOAD}" \
     -DBUILD_TESTS="${BUILD_TESTS}" \
     -DBUILD_PYTHON_BINDINGS="${BUILD_PYTHON}" \
-    ${EXTRA_CMAKE_ARGS}
+    "${EXTRA_CMAKE_ARGS[@]}"
 
 echo ""
 echo "Configuration complete. Next steps:"

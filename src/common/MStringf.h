@@ -20,7 +20,8 @@
 class Stringf : public String
 {
 public:
-    enum {
+    enum
+    {
         MAX_STRING_LENGTH = 10000,
     };
 

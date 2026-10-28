@@ -12,17 +12,21 @@
 #include "BoundedAlphaOptimizedNode.h"
 #include "AlphaCROWNAnalysis.h"
 
-namespace NLR {
+namespace NLR
+{
 
-bool BoundedAlphaOptimizeNode::isOptimizingLower() const {
+bool BoundedAlphaOptimizeNode::isOptimizingLower() const
+{
     return _alphaCrownAnalysis ? _alphaCrownAnalysis->isOptimizingLower() : true;
 }
 
-bool BoundedAlphaOptimizeNode::isOptimizingUpper() const {
+bool BoundedAlphaOptimizeNode::isOptimizingUpper() const
+{
     return _alphaCrownAnalysis ? _alphaCrownAnalysis->isOptimizingUpper() : false;
 }
 
-bool BoundedAlphaOptimizeNode::isOptimizingBoth() const {
+bool BoundedAlphaOptimizeNode::isOptimizingBoth() const
+{
     return false;
 }
 

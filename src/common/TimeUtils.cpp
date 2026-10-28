@@ -41,7 +41,8 @@ struct timespec TimeUtils::sampleMicro()
 
 unsigned long long TimeUtils::timePassed( const struct timespec &then, const struct timespec &now )
 {
-    enum {
+    enum
+    {
         MICROSECONDS_IN_SECOND = 1000000,
         NANOSECONDS_IN_MICROSECOND = 1000,
     };
@@ -57,6 +58,6 @@ String TimeUtils::now()
     time_t secondsSinceEpoch = time( NULL );
     struct tm *formattedTime = localtime( &secondsSinceEpoch );
 
-    return Stringf(
-        "%02u:%02u:%02u", formattedTime->tm_hour, formattedTime->tm_min, formattedTime->tm_sec );
+    return Stringf( "%02u:%02u:%02u", formattedTime->tm_hour, formattedTime->tm_min,
+                    formattedTime->tm_sec );
 }

@@ -19,9 +19,7 @@ String::String( Super super )
 {
 }
 
-String::String()
-{
-}
+String::String() {}
 
 String::String( const char *string, unsigned length )
     : _super( string, length )
@@ -215,11 +213,11 @@ bool String::endsWith( const String &suffix )
 
 bool String::startsWith( const String &prefix ) const
 {
-    if (prefix.length() > length())
+    if ( prefix.length() > length() )
         return false;
-    for (unsigned i = 0; i < prefix.length(); ++i)
+    for ( unsigned i = 0; i < prefix.length(); ++i )
     {
-        if (_super[i] != prefix._super[i])
+        if ( _super[i] != prefix._super[i] )
             return false;
     }
     return true;
@@ -227,6 +225,6 @@ bool String::startsWith( const String &prefix ) const
 
 std::ostream &operator<<( std::ostream &stream, const String &string )
 {
-    stream.write(string.ascii(), string.length());
+    stream.write( string.ascii(), string.length() );
     return stream;
 }

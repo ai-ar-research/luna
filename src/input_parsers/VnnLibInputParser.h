@@ -31,102 +31,90 @@
 class VnnLibInputParser
 {
 public:
-    static BoundedTensor<torch::Tensor> parseInputBounds(const String &vnnlibFilePath,
-                                                          unsigned expectedInputSize);
+    static BoundedTensor<torch::Tensor> parseInputBounds( const String &vnnlibFilePath,
+                                                          unsigned expectedInputSize );
 
-    static NLR::OutputConstraintSet parseOutputConstraints(const String &vnnlibFilePath,
-                                                           unsigned expectedOutputSize);
+    static NLR::OutputConstraintSet parseOutputConstraints( const String &vnnlibFilePath,
+                                                            unsigned expectedOutputSize );
 
     static std::pair<BoundedTensor<torch::Tensor>, NLR::OutputConstraintSet>
-    parseInputAndOutputConstraints(const String &vnnlibFilePath,
-                                   unsigned expectedInputSize,
-                                   unsigned expectedOutputSize);
+    parseInputAndOutputConstraints( const String &vnnlibFilePath, unsigned expectedInputSize,
+                                    unsigned expectedOutputSize );
 
 private:
-    struct InputBoundInfo {
+    struct InputBoundInfo
+    {
         bool hasLowerBound;
         bool hasUpperBound;
         double lowerBound;
         double upperBound;
 
         InputBoundInfo()
-            : hasLowerBound(false), hasUpperBound(false),
-              lowerBound(-std::numeric_limits<double>::infinity()),
-              upperBound(std::numeric_limits<double>::infinity()) {}
+            : hasLowerBound( false )
+            , hasUpperBound( false )
+            , lowerBound( -std::numeric_limits<double>::infinity() )
+            , upperBound( std::numeric_limits<double>::infinity() )
+        {
+        }
     };
 
-    static String readVnnlibFile(const String &vnnlibFilePath);
-    static Vector<String> tokenize(const String &vnnlibContent);
+    static String readVnnlibFile( const String &vnnlibFilePath );
+    static Vector<String> tokenize( const String &vnnlibContent );
 
-    static void parseTokens(const Vector<String> &tokens,
-                           Vector<InputBoundInfo> &inputBounds);
+    static void parseTokens( const Vector<String> &tokens, Vector<InputBoundInfo> &inputBounds );
 
-    static int parseCommand(int index,
-                           const Vector<String> &tokens,
-                           Vector<InputBoundInfo> &inputBounds);
+    static int parseCommand( int index, const Vector<String> &tokens,
+                             Vector<InputBoundInfo> &inputBounds );
 
-    static int parseDeclareConst(int index,
-                                 const Vector<String> &tokens,
-                                 Vector<InputBoundInfo> &inputBounds);
+    static int parseDeclareConst( int index, const Vector<String> &tokens,
+                                  Vector<InputBoundInfo> &inputBounds );
 
-    static int parseAssert(int index,
-                          const Vector<String> &tokens,
-                          Vector<InputBoundInfo> &inputBounds);
+    static int parseAssert( int index, const Vector<String> &tokens,
+                            Vector<InputBoundInfo> &inputBounds );
 
-    static int parseCondition(int index,
-                             const Vector<String> &tokens,
-                             Vector<InputBoundInfo> &inputBounds);
+    static int parseCondition( int index, const Vector<String> &tokens,
+                               Vector<InputBoundInfo> &inputBounds );
 
-    static int extractVariableIndex(const String &varName);
-    static bool isInputVariable(const String &varName);
-    static bool isOutputVariable(const String &varName);
-    static double extractScalar(const String &token);
+    static int extractVariableIndex( const String &varName );
+    static bool isInputVariable( const String &varName );
+    static bool isOutputVariable( const String &varName );
+    static double extractScalar( const String &token );
 
-    static void parseOutputTokens(const Vector<String> &tokens,
-                                  NLR::OutputConstraintSet &outputConstraints);
+    static void parseOutputTokens( const Vector<String> &tokens,
+                                   NLR::OutputConstraintSet &outputConstraints );
 
-    static int parseOutputCommand(int index,
-                                  const Vector<String> &tokens,
-                                  NLR::OutputConstraintSet &outputConstraints);
+    static int parseOutputCommand( int index, const Vector<String> &tokens,
+                                   NLR::OutputConstraintSet &outputConstraints );
 
-    static int parseOutputAssert(int index,
-                                 const Vector<String> &tokens,
-                                 NLR::OutputConstraintSet &outputConstraints);
+    static int parseOutputAssert( int index, const Vector<String> &tokens,
+                                  NLR::OutputConstraintSet &outputConstraints );
 
-    static int parseOutputCondition(int index,
-                                    const Vector<String> &tokens,
-                                    NLR::OutputConstraintSet &outputConstraints);
+    static int parseOutputCondition( int index, const Vector<String> &tokens,
+                                     NLR::OutputConstraintSet &outputConstraints );
 
-    static int parseOutputBranch(int index,
-                                  const Vector<String> &tokens,
+    static int parseOutputBranch( int index, const Vector<String> &tokens,
                                   Vector<NLR::OutputConstraint> &branchConstraints,
-                                  unsigned outputDim);
+                                  unsigned outputDim );
 
-    static int parseLinearExpression(int index,
-                                     const Vector<String> &tokens,
-                                     Vector<NLR::OutputTerm> &terms,
-                                     double &scalarSum);
+    static int parseLinearExpression( int index, const Vector<String> &tokens,
+                                      Vector<NLR::OutputTerm> &terms, double &scalarSum );
 
-    static bool isScalar(const String &token);
+    static bool isScalar( const String &token );
 
-    static void parseTokensBoth(const Vector<String> &tokens,
+    static void parseTokensBoth( const Vector<String> &tokens, Vector<InputBoundInfo> &inputBounds,
+                                 NLR::OutputConstraintSet &outputConstraints );
+
+    static int parseCommandBoth( int index, const Vector<String> &tokens,
+                                 Vector<InputBoundInfo> &inputBounds,
+                                 NLR::OutputConstraintSet &outputConstraints );
+
+    static int parseAssertBoth( int index, const Vector<String> &tokens,
                                 Vector<InputBoundInfo> &inputBounds,
-                                NLR::OutputConstraintSet &outputConstraints);
+                                NLR::OutputConstraintSet &outputConstraints );
 
-    static int parseCommandBoth(int index,
-                                const Vector<String> &tokens,
-                                Vector<InputBoundInfo> &inputBounds,
-                                NLR::OutputConstraintSet &outputConstraints);
-
-    static int parseAssertBoth(int index,
-                               const Vector<String> &tokens,
-                               Vector<InputBoundInfo> &inputBounds,
-                               NLR::OutputConstraintSet &outputConstraints);
-
-    static int parseConditionBoth(int index,
-                                  const Vector<String> &tokens,
-                                  Vector<InputBoundInfo> &inputBounds,
-                                  NLR::OutputConstraintSet &outputConstraints);
+    static int parseConditionBoth( int index, const Vector<String> &tokens,
+                                   Vector<InputBoundInfo> &inputBounds,
+                                   NLR::OutputConstraintSet &outputConstraints );
 };
 
 #endif // __VnnLibInputParser_h__

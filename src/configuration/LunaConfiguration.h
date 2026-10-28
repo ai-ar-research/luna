@@ -19,19 +19,21 @@
 class LunaConfiguration
 {
 public:
-    enum class AnalysisMethod {
+    enum class AnalysisMethod
+    {
         CROWN,
         AlphaCROWN
     };
 
-    enum class BoundSide {
+    enum class BoundSide
+    {
         Lower,
         Upper
     };
 
     static void print();
     static void resetToDefaults();
-    static void parseArgs(int argc, char** argv);
+    static void parseArgs( int argc, char **argv );
 
     static AnalysisMethod ANALYSIS_METHOD;
     static bool COMPUTE_LOWER;
@@ -78,10 +80,10 @@ public:
     static bool NETWORK_LEVEL_REASONER_LOGGING;
     static const double SIGMOID_CUTOFF_CONSTANT;
 
-    static String analysisMethodToString(AnalysisMethod method);
-    static AnalysisMethod stringToAnalysisMethod(const String& str);
-    static String boundSideToString(BoundSide side);
-    static BoundSide stringToBoundSide(const String& str);
+    static String analysisMethodToString( AnalysisMethod method );
+    static AnalysisMethod stringToAnalysisMethod( const String &str );
+    static String boundSideToString( BoundSide side );
+    static BoundSide stringToBoundSide( const String &str );
 };
 
 #endif // __LunaConfiguration_h__

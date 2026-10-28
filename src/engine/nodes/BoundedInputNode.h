@@ -14,43 +14,68 @@
 
 #include "BoundedTorchNode.h"
 
-namespace NLR {
+namespace NLR
+{
 
-class BoundedInputNode : public NLR::BoundedTorchNode {
+class BoundedInputNode : public NLR::BoundedTorchNode
+{
 public:
-    BoundedInputNode(unsigned inputIndex, unsigned inputSize, const String& name = "");
+    BoundedInputNode( unsigned inputIndex, unsigned inputSize, const String &name = "" );
 
-    NLR::NodeType getNodeType() const override { return NLR::NodeType::INPUT; }
-    String getNodeName() const override { return _nodeName; }
-    unsigned getNodeIndex() const override { return _nodeIndex; }
+    NLR::NodeType getNodeType() const override
+    {
+        return NLR::NodeType::INPUT;
+    }
+    String getNodeName() const override
+    {
+        return _nodeName;
+    }
+    unsigned getNodeIndex() const override
+    {
+        return _nodeIndex;
+    }
 
-    torch::Tensor forward(const torch::Tensor& input) override;
+    torch::Tensor forward( const torch::Tensor &input ) override;
 
-    void boundBackward(
-        const BoundA& last_lA,
-        const BoundA& last_uA,
-        const Vector<BoundedTensor<torch::Tensor>>& inputBounds,
-        Vector<Pair<BoundA, BoundA>>& outputA_matrices,
-        torch::Tensor& lbias,
-        torch::Tensor& ubias
-    ) override;
+    void boundBackward( const BoundA &last_lA, const BoundA &last_uA,
+                        const Vector<BoundedTensor<torch::Tensor>> &inputBounds,
+                        Vector<Pair<BoundA, BoundA>> &outputA_matrices, torch::Tensor &lbias,
+                        torch::Tensor &ubias ) override;
 
     BoundedTensor<torch::Tensor> computeIntervalBoundPropagation(
-        const Vector<BoundedTensor<torch::Tensor>>& inputBounds) override;
+        const Vector<BoundedTensor<torch::Tensor>> &inputBounds ) override;
 
-    unsigned getInputSize() const override { return _input_size; }
-    unsigned getOutputSize() const override { return _output_size; }
-    bool isPerturbed() const override { return true; }
+    unsigned getInputSize() const override
+    {
+        return _input_size;
+    }
+    unsigned getOutputSize() const override
+    {
+        return _output_size;
+    }
+    bool isPerturbed() const override
+    {
+        return true;
+    }
 
-    void setInputSize(unsigned size) override;
-    void setOutputSize(unsigned size) override;
+    void setInputSize( unsigned size ) override;
+    void setOutputSize( unsigned size ) override;
 
-    void setNodeIndex(unsigned index) override { _nodeIndex = index; }
-    void setNodeName(const String& name) override { _nodeName = name; }
-    void moveToDevice(const torch::Device& device) override;
+    void setNodeIndex( unsigned index ) override
+    {
+        _nodeIndex = index;
+    }
+    void setNodeName( const String &name ) override
+    {
+        _nodeName = name;
+    }
+    void moveToDevice( const torch::Device &device ) override;
 
-    unsigned getInputIndex() const { return _inputIndex; }
-    void setInputBounds(const BoundedTensor<torch::Tensor>& bounds);
+    unsigned getInputIndex() const
+    {
+        return _inputIndex;
+    }
+    void setInputBounds( const BoundedTensor<torch::Tensor> &bounds );
     BoundedTensor<torch::Tensor> getInputBounds() const;
 
 private:

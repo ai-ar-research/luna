@@ -20,9 +20,7 @@ template <class L, class R> class Pair
     typedef std::pair<L, R> Super;
 
 public:
-    Pair()
-    {
-    }
+    Pair() {}
 
     Pair( const L &first, const R &second )
         : _container( first, second )

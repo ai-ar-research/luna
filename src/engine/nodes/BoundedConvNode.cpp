@@ -475,8 +475,9 @@ BoundA BoundedConvNode::boundOneSide( const BoundA &last_A, const torch::Tensor 
                output_padding[1] >= std::max( stride[1], dilation[1] ) ) )
         {
             std::ostringstream message;
-            message << "BoundedConvNode " << _nodeName.ascii() << " computed invalid output_padding=["
-                    << output_padding[0] << "," << output_padding[1] << "] input_shape=[";
+            message << "BoundedConvNode " << _nodeName.ascii()
+                    << " computed invalid output_padding=[" << output_padding[0] << ","
+                    << output_padding[1] << "] input_shape=[";
             for ( std::size_t i = 0; i < input_shape.size(); ++i )
             {
                 message << ( i ? "," : "" ) << input_shape[i];
@@ -486,10 +487,9 @@ BoundA BoundedConvNode::boundOneSide( const BoundA &last_A, const torch::Tensor 
             {
                 message << ( i ? "," : "" ) << output_shape[i];
             }
-            message << "] kernel=[" << weight.size( 2 ) << "," << weight.size( 3 )
-                    << "] stride=[" << stride[0] << "," << stride[1] << "] padding=["
-                    << padding[0] << "," << padding[1] << "] dilation=[" << dilation[0] << ","
-                    << dilation[1] << "]";
+            message << "] kernel=[" << weight.size( 2 ) << "," << weight.size( 3 ) << "] stride=["
+                    << stride[0] << "," << stride[1] << "] padding=[" << padding[0] << ","
+                    << padding[1] << "] dilation=[" << dilation[0] << "," << dilation[1] << "]";
             throw std::runtime_error( message.str() );
         }
 

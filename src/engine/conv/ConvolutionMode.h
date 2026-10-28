@@ -12,10 +12,12 @@
 #ifndef __CONVOLUTION_MODE_H__
 #define __CONVOLUTION_MODE_H__
 
-namespace NLR {
+namespace NLR
+{
 
 // Mirrors auto_LiRPA's conv_mode
-enum class ConvMode {
+enum class ConvMode
+{
     MATRIX,
     PATCHES
 };

@@ -13,7 +13,7 @@ set(TEST_INCLUDE_DIRS
     ${PROJECT_SOURCE_DIR}/src/configuration
 )
 
-if (NOT MSVC)
+if(NOT MSVC)
     set(TEST_COMPILE_FLAGS ${COMPILE_FLAGS})
     string(REPLACE "-O3" "-O2" TEST_COMPILE_FLAGS "${TEST_COMPILE_FLAGS}")
 else()
@@ -81,7 +81,7 @@ if(BUILD_BENCHMARKS)
 endif()
 
 include(ProcessorCount)
-ProcessorCount(CTEST_NTHREADS)
+processorcount(CTEST_NTHREADS)
 if(NOT CTEST_NTHREADS OR CTEST_NTHREADS EQUAL 0)
     set(CTEST_NTHREADS 1)
 endif()

@@ -66,8 +66,7 @@ Vector<T> transposeTensor( Vector<T> tensor, TensorShape shape, Permutation perm
 
 TensorShape getMultidirectionalBroadcastShape( TensorShape shape1, TensorShape shape2 );
 
-TensorIndices broadcastIndex( TensorShape currentShape,
-                              TensorShape broadcastShape,
+TensorIndices broadcastIndex( TensorShape currentShape, TensorShape broadcastShape,
                               TensorIndices broadcastIndices );
 
 TensorIndex unsignIndex( unsigned int size, SignedTensorIndex signedIndex );
@@ -83,7 +82,7 @@ public:
     Padding( int padFront, int padBack );
 };
 
-Padding
-calculatePaddingNeeded( int inputSize, int filterSize, int stride, bool padFrontPreferentially );
+Padding calculatePaddingNeeded( int inputSize, int filterSize, int stride,
+                                bool padFrontPreferentially );
 
 #endif // __TensorUtils_h__

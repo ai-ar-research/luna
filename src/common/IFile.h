@@ -18,7 +18,8 @@ class String;
 class IFile
 {
 public:
-    enum Mode {
+    enum Mode
+    {
         MODE_READ,
         MODE_WRITE_APPEND,
         MODE_WRITE_TRUNCATE,
@@ -32,9 +33,7 @@ public:
 
     static bool exists( const String &path );
 
-    virtual ~IFile()
-    {
-    }
+    virtual ~IFile() {}
 };
 
 #endif // __IFile_h__

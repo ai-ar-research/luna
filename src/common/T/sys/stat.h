@@ -14,10 +14,12 @@
 
 #include <sys/stat.h>
 
-namespace T {
-    inline int stat(const char *pathname, struct ::stat *statbuf) {
-        return ::stat(pathname, statbuf);
-    }
+namespace T
+{
+inline int stat( const char *pathname, struct ::stat *statbuf )
+{
+    return ::stat( pathname, statbuf );
 }
+} // namespace T
 
 #endif // __T__sys__stat_h__

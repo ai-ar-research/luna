@@ -25,7 +25,8 @@
 #include <vector>
 #include <unordered_map>
 
-namespace NLR {
+namespace NLR
+{
 
 class BoundedAlphaOptimizeNode;
 class TorchModel;
@@ -33,32 +34,32 @@ class TorchModel;
 class AlphaCROWNAnalysis
 {
 public:
-    AlphaCROWNAnalysis(TorchModel* torchModel);
+    AlphaCROWNAnalysis( TorchModel *torchModel );
 
     ~AlphaCROWNAnalysis();
 
     void initializeAlphaParameters();
 
-    struct AlphaResult {
+    struct AlphaResult
+    {
         torch::Tensor alpha;
         torch::Tensor unstableMask;
         torch::Tensor unstableIndices;
-        int numUnstable{0};
-        int outDim{0};
-        bool hasSpecDefaultSlot{false};
+        int numUnstable{ 0 };
+        int outDim{ 0 };
+        bool hasSpecDefaultSlot{ false };
     };
 
-    AlphaResult getAlphaForNodeAllSpecs(
-        unsigned nodeIndex,
-        const std::string& startKey,
-        int specDim,
-        int outDim,
-        const torch::Tensor& input_lb,
-        const torch::Tensor& input_ub);
+    AlphaResult getAlphaForNodeAllSpecs( unsigned nodeIndex, const std::string &startKey,
+                                         int specDim, int outDim, const torch::Tensor &input_lb,
+                                         const torch::Tensor &input_ub );
 
-    void setOptimizationStage(const std::string& stage);
+    void setOptimizationStage( const std::string &stage );
 
-    std::string getOptimizationStage() const { return _optimizationStage; }
+    std::string getOptimizationStage() const
+    {
+        return _optimizationStage;
+    }
 
     unsigned getNumOptimizableNodes() const;
 
@@ -66,71 +67,118 @@ public:
 
     void resetForOptimization();
 
-    void resetAlphasFromCROWNSlopes(bool isLower);
+    void resetAlphasFromCROWNSlopes( bool isLower );
 
-    CROWNAnalysis* getCROWNAnalysis() const;
-    TorchModel* getTorchModel() const;
+    CROWNAnalysis *getCROWNAnalysis() const;
+    TorchModel *getTorchModel() const;
 
-    torch::Tensor computeOptimizedBounds(LunaConfiguration::BoundSide side);
+    torch::Tensor computeOptimizedBounds( LunaConfiguration::BoundSide side );
 
     void preserveIntermediateBoundsForNextOptimization();
 
-    bool hasIntermediateBoundsForReuse() const { return _reuseIntermediateBounds; }
+    bool hasIntermediateBoundsForReuse() const
+    {
+        return _reuseIntermediateBounds;
+    }
 
-    void seedAlphas(const std::unordered_map<unsigned,
-        std::unordered_map<std::string, AlphaParameters>>& alphas);
+    void
+    seedAlphas( const std::unordered_map<unsigned, std::unordered_map<std::string, AlphaParameters>>
+                    &alphas );
     void seedIntermediateBounds(
-        const std::unordered_map<unsigned, std::pair<torch::Tensor, torch::Tensor>>& bounds);
-    std::unordered_map<unsigned,
-        std::unordered_map<std::string, AlphaParameters>> extractAlphas() const;
+        const std::unordered_map<unsigned, std::pair<torch::Tensor, torch::Tensor>> &bounds );
+    std::unordered_map<unsigned, std::unordered_map<std::string, AlphaParameters>>
+    extractAlphas() const;
 
     void clipAlphaParameters();
 
     std::vector<torch::Tensor> collectAlphaParameters();
 
-    bool isAlphaEnabled() const { return _alphaEnabled; }
-    void setAlphaEnabled(bool enabled) { _alphaEnabled = enabled; }
+    bool isAlphaEnabled() const
+    {
+        return _alphaEnabled;
+    }
+    void setAlphaEnabled( bool enabled )
+    {
+        _alphaEnabled = enabled;
+    }
 
-    bool isInitialized() const { return _initialized; }
+    bool isInitialized() const
+    {
+        return _initialized;
+    }
 
-    unsigned getIterations() const { return _iteration; }
-    void setIterations(unsigned iterations) { _iteration = iterations; }
+    unsigned getIterations() const
+    {
+        return _iteration;
+    }
+    void setIterations( unsigned iterations )
+    {
+        _iteration = iterations;
+    }
 
-    float getLearningRate() const { return _learningRate; }
-    void setLearningRate(float lr) { _learningRate = lr; }
-    void decayLearningRate() { _learningRate *= LunaConfiguration::ALPHA_LR_DECAY; }
+    float getLearningRate() const
+    {
+        return _learningRate;
+    }
+    void setLearningRate( float lr )
+    {
+        _learningRate = lr;
+    }
+    void decayLearningRate()
+    {
+        _learningRate *= LunaConfiguration::ALPHA_LR_DECAY;
+    }
 
-    void setIteration(unsigned iteration) {
+    void setIteration( unsigned iteration )
+    {
         LunaConfiguration::ALPHA_ITERATIONS = iteration;
         _iteration = iteration;
     }
-    void setLrAlpha(float lr) {
+    void setLrAlpha( float lr )
+    {
         LunaConfiguration::ALPHA_LR = lr;
         _learningRate = lr;
     }
-    void setKeepBest(bool keep) { LunaConfiguration::KEEP_BEST = keep; }
-    void setOptimizer(const std::string& opt) { LunaConfiguration::OPTIMIZER = String(opt.c_str()); }
-    void setBoundSide(LunaConfiguration::BoundSide side) { LunaConfiguration::BOUND_SIDE = side; }
+    void setKeepBest( bool keep )
+    {
+        LunaConfiguration::KEEP_BEST = keep;
+    }
+    void setOptimizer( const std::string &opt )
+    {
+        LunaConfiguration::OPTIMIZER = String( opt.c_str() );
+    }
+    void setBoundSide( LunaConfiguration::BoundSide side )
+    {
+        LunaConfiguration::BOUND_SIDE = side;
+    }
 
-    LunaConfiguration::BoundSide getBoundSide() const { return LunaConfiguration::BOUND_SIDE; }
-    bool isOptimizingLower() const { return LunaConfiguration::BOUND_SIDE == LunaConfiguration::BoundSide::Lower; }
-    bool isOptimizingUpper() const { return LunaConfiguration::BOUND_SIDE == LunaConfiguration::BoundSide::Upper; }
+    LunaConfiguration::BoundSide getBoundSide() const
+    {
+        return LunaConfiguration::BOUND_SIDE;
+    }
+    bool isOptimizingLower() const
+    {
+        return LunaConfiguration::BOUND_SIDE == LunaConfiguration::BoundSide::Lower;
+    }
+    bool isOptimizingUpper() const
+    {
+        return LunaConfiguration::BOUND_SIDE == LunaConfiguration::BoundSide::Upper;
+    }
 
 private:
-
-    TorchModel* _torchModel;
+    TorchModel *_torchModel;
     std::unique_ptr<CROWNAnalysis> _crownAnalysis;
 
     // nodeIndex -> startKey -> AlphaParameters
     // alpha shape: [2, spec, 1, numUnstable] where dim 0 separates lA/uA paths
-    std::unordered_map<unsigned,
-        std::unordered_map<std::string, AlphaParameters>> _alphaByNodeStart;
+    std::unordered_map<unsigned, std::unordered_map<std::string, AlphaParameters>>
+        _alphaByNodeStart;
 
     std::vector<std::pair<unsigned, std::shared_ptr<BoundedAlphaOptimizeNode>>> _optimizableNodes;
 
     bool _alphaEnabled;
     bool _initialized;
-    bool _reuseIntermediateBounds{false};
+    bool _reuseIntermediateBounds{ false };
 
     // While the optimizer runs its alpha tensors must stay the ones it holds, so their unstable
     // sets are not rebuilt when recomputed intermediate bounds move a neuron across zero
@@ -139,8 +187,8 @@ private:
     float _learningRate;
     std::string _optimizationStage;
 
-    std::unordered_map<unsigned,
-        std::unordered_map<std::string, AlphaParameters>> _bestAlphaByNodeStart;
+    std::unordered_map<unsigned, std::unordered_map<std::string, AlphaParameters>>
+        _bestAlphaByNodeStart;
 
     torch::Tensor _bestLowerBounds;
     torch::Tensor _bestUpperBounds;
@@ -158,14 +206,11 @@ private:
     void performForwardPass();
     void prepareOptimizableActivations();
     void performCROWNInitializationPass();
-    AlphaParameters& ensureAlphaFor(
-        unsigned nodeIndex,
-        const std::string& startKey,
-        int specDim, int outDim,
-        const torch::Tensor& input_lb,
-        const torch::Tensor& input_ub);
+    AlphaParameters &ensureAlphaFor( unsigned nodeIndex, const std::string &startKey, int specDim,
+                                     int outDim, const torch::Tensor &input_lb,
+                                     const torch::Tensor &input_ub );
 
-    void updateBestAlphas(const std::vector<int>& improvedIndices);
+    void updateBestAlphas( const std::vector<int> &improvedIndices );
 
     void restoreBestAlphas();
 
@@ -175,14 +220,12 @@ private:
     void _captureInitIntermediateBounds();
     void _injectInitIntermediateBounds();
 
-    torch::Tensor computeLoss(const torch::Tensor& lowerBounds,
-                             const torch::Tensor& upperBounds,
-                             bool optimizeLower,
-                             c10::optional<torch::Tensor> stop_mask_opt = c10::nullopt);
+    torch::Tensor computeLoss( const torch::Tensor &lowerBounds, const torch::Tensor &upperBounds,
+                               bool optimizeLower,
+                               c10::optional<torch::Tensor> stop_mask_opt = c10::nullopt );
 
-    std::vector<int> findImprovedIndices(const torch::Tensor& currentBounds,
-                                        const torch::Tensor& bestBounds,
-                                        bool isLowerBound);
+    std::vector<int> findImprovedIndices( const torch::Tensor &currentBounds,
+                                          const torch::Tensor &bestBounds, bool isLowerBound );
 
     bool shouldPerformOptimization() const;
 
@@ -191,7 +234,7 @@ private:
 
     void updateFromConfig();
 
-    void log(const String& message);
+    void log( const String &message );
 };
 
 } // namespace NLR

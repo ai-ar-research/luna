@@ -13,92 +13,119 @@
 #include <torch/torch.h>
 #include <cmath>
 
-namespace NLR {
+namespace NLR
+{
 
-BoundedConcatNode::BoundedConcatNode(int axis, unsigned numInputs, const String& name)
-    : _axis(axis), _numInputs(numInputs), _nodeName(name), _nodeIndex(0),
-      _input_size(0), _output_size(0) {
+BoundedConcatNode::BoundedConcatNode( int axis, unsigned numInputs, const String &name )
+    : _axis( axis )
+    , _numInputs( numInputs )
+    , _nodeName( name )
+    , _nodeIndex( 0 )
+    , _input_size( 0 )
+    , _output_size( 0 )
+{
 }
 
-torch::Tensor BoundedConcatNode::forward(const torch::Tensor& input) {
+torch::Tensor BoundedConcatNode::forward( const torch::Tensor &input )
+{
     return input;
 }
 
-torch::Tensor BoundedConcatNode::forward(const std::vector<torch::Tensor>& inputs) {
-    if (inputs.empty()) {
-        throw std::runtime_error("BoundedConcatNode::forward - no inputs provided");
+torch::Tensor BoundedConcatNode::forward( const std::vector<torch::Tensor> &inputs )
+{
+    if ( inputs.empty() )
+    {
+        throw std::runtime_error( "BoundedConcatNode::forward - no inputs provided" );
     }
 
-    if (inputs.size() == 1) {
+    if ( inputs.size() == 1 )
+    {
         return inputs[0];
     }
 
     int64_t axis = _axis;
     int64_t ndim = inputs[0].dim();
 
-    if (axis < 0) {
+    if ( axis < 0 )
+    {
         axis += ndim;
     }
 
     // Batch dim may have been removed
-    if (axis >= ndim && axis > 0) {
+    if ( axis >= ndim && axis > 0 )
+    {
         axis = axis - 1;
     }
 
-    if (axis < 0 || axis >= ndim) {
-        throw std::runtime_error("BoundedConcatNode::forward - axis out of range");
+    if ( axis < 0 || axis >= ndim )
+    {
+        throw std::runtime_error( "BoundedConcatNode::forward - axis out of range" );
     }
 
-    torch::Tensor result = torch::cat(inputs, axis);
+    torch::Tensor result = torch::cat( inputs, axis );
     return result;
 }
 
-void BoundedConcatNode::boundBackward(
-    const BoundA& last_lA,
-    const BoundA& last_uA,
-    const Vector<BoundedTensor<torch::Tensor>>& inputBounds,
-    Vector<Pair<BoundA, BoundA>>& outputA_matrices,
-    torch::Tensor& lbias,
-    torch::Tensor& ubias) {
+void BoundedConcatNode::boundBackward( const BoundA &last_lA, const BoundA &last_uA,
+                                       const Vector<BoundedTensor<torch::Tensor>> &inputBounds,
+                                       Vector<Pair<BoundA, BoundA>> &outputA_matrices,
+                                       torch::Tensor &lbias, torch::Tensor &ubias )
+{
 
-    if (inputBounds.size() != _numInputs) {
-        throw std::runtime_error("BoundedConcatNode: input count mismatch");
+    if ( inputBounds.size() != _numInputs )
+    {
+        throw std::runtime_error( "BoundedConcatNode: input count mismatch" );
     }
 
-    if (_input_sizes.size() != _numInputs) {
+    if ( _input_sizes.size() != _numInputs )
+    {
         _input_sizes.clear();
-        for (unsigned i = 0; i < _numInputs; ++i) {
-            if (inputBounds[i].lower().defined()) {
+        for ( unsigned i = 0; i < _numInputs; ++i )
+        {
+            if ( inputBounds[i].lower().defined() )
+            {
                 torch::Tensor lb = inputBounds[i].lower();
                 int64_t effective_axis = _axis;
-                if (_axis < 0) {
+                if ( _axis < 0 )
+                {
                     effective_axis = _axis + lb.dim();
-                } else if (_axis >= lb.dim() && _axis > 0) {
+                }
+                else if ( _axis >= lb.dim() && _axis > 0 )
+                {
                     effective_axis = _axis - 1;
                 }
-                if (effective_axis >= 0 && effective_axis < lb.dim()) {
-                    _input_sizes.push_back(static_cast<unsigned>(lb.size(effective_axis)));
-                } else {
-                    _input_sizes.push_back(1);
+                if ( effective_axis >= 0 && effective_axis < lb.dim() )
+                {
+                    _input_sizes.push_back( static_cast<unsigned>( lb.size( effective_axis ) ) );
                 }
-            } else {
-                _input_sizes.push_back(1);
+                else
+                {
+                    _input_sizes.push_back( 1 );
+                }
+            }
+            else
+            {
+                _input_sizes.push_back( 1 );
             }
         }
     }
 
     outputA_matrices.clear();
-    for (unsigned i = 0; i < _numInputs; ++i) {
-        outputA_matrices.append(Pair<BoundA, BoundA>(BoundA(), BoundA()));
+    for ( unsigned i = 0; i < _numInputs; ++i )
+    {
+        outputA_matrices.append( Pair<BoundA, BoundA>( BoundA(), BoundA() ) );
     }
 
     // Split A along concat axis: auto_LiRPA uses split(A, input_size, dim=axis+1)
-    auto splitA = [&](const BoundA& A, const char* name) -> std::vector<BoundA> {
+    auto splitA = [&]( const BoundA &A, const char *name ) -> std::vector<BoundA>
+    {
         std::vector<BoundA> result;
 
-        if (!A.defined() || !A.isTensor()) {
-            for (unsigned i = 0; i < _numInputs; ++i) {
-                result.push_back(BoundA());
+        if ( !A.defined() || !A.isTensor() )
+        {
+            for ( unsigned i = 0; i < _numInputs; ++i )
+            {
+                result.push_back( BoundA() );
             }
             return result;
         }
@@ -108,116 +135,145 @@ void BoundedConcatNode::boundBackward(
         int split_dim = _axis + 1;
 
         // Batch dim may be missing
-        if (split_dim >= A_tensor.dim() && split_dim > 0) {
+        if ( split_dim >= A_tensor.dim() && split_dim > 0 )
+        {
             split_dim = _axis;
         }
 
         (void)name;
 
         std::vector<int64_t> split_sizes;
-        int64_t total_size = A_tensor.size(split_dim);
+        int64_t total_size = A_tensor.size( split_dim );
 
-        if (_input_sizes.empty() || _input_sizes.size() != _numInputs) {
+        if ( _input_sizes.empty() || _input_sizes.size() != _numInputs )
+        {
             int64_t chunk_size = total_size / _numInputs;
             int64_t remainder = total_size % _numInputs;
-            for (unsigned i = 0; i < _numInputs; ++i) {
-                split_sizes.push_back(chunk_size + (i < static_cast<unsigned>(remainder) ? 1 : 0));
+            for ( unsigned i = 0; i < _numInputs; ++i )
+            {
+                split_sizes.push_back( chunk_size +
+                                       ( i < static_cast<unsigned>( remainder ) ? 1 : 0 ) );
             }
-        } else {
+        }
+        else
+        {
             int64_t sum_sizes = 0;
-            for (unsigned size : _input_sizes) {
+            for ( unsigned size : _input_sizes )
+            {
                 sum_sizes += size;
             }
 
-            if (sum_sizes == total_size) {
-                for (unsigned size : _input_sizes) {
-                    split_sizes.push_back(static_cast<int64_t>(size));
+            if ( sum_sizes == total_size )
+            {
+                for ( unsigned size : _input_sizes )
+                {
+                    split_sizes.push_back( static_cast<int64_t>( size ) );
                 }
-            } else {
+            }
+            else
+            {
                 // Proportional split when A represents a subset/projection
-                double scale = static_cast<double>(total_size) / sum_sizes;
+                double scale = static_cast<double>( total_size ) / sum_sizes;
                 int64_t accumulated = 0;
-                for (unsigned i = 0; i < _input_sizes.size(); ++i) {
-                    if (i == _input_sizes.size() - 1) {
-                        split_sizes.push_back(total_size - accumulated);
-                    } else {
-                        int64_t chunk = static_cast<int64_t>(std::round(_input_sizes[i] * scale));
-                        split_sizes.push_back(chunk);
+                for ( unsigned i = 0; i < _input_sizes.size(); ++i )
+                {
+                    if ( i == _input_sizes.size() - 1 )
+                    {
+                        split_sizes.push_back( total_size - accumulated );
+                    }
+                    else
+                    {
+                        int64_t chunk =
+                            static_cast<int64_t>( std::round( _input_sizes[i] * scale ) );
+                        split_sizes.push_back( chunk );
                         accumulated += chunk;
                     }
                 }
             }
         }
 
-        auto chunks = torch::split(A_tensor, split_sizes, split_dim);
+        auto chunks = torch::split( A_tensor, split_sizes, split_dim );
 
-        for (size_t i = 0; i < chunks.size(); ++i) {
-            result.push_back(BoundA(chunks[i]));
+        for ( size_t i = 0; i < chunks.size(); ++i )
+        {
+            result.push_back( BoundA( chunks[i] ) );
         }
 
         return result;
     };
 
-    std::vector<BoundA> lA_chunks = splitA(last_lA, "lA");
-    std::vector<BoundA> uA_chunks = splitA(last_uA, "uA");
+    std::vector<BoundA> lA_chunks = splitA( last_lA, "lA" );
+    std::vector<BoundA> uA_chunks = splitA( last_uA, "uA" );
 
-    for (unsigned i = 0; i < _numInputs && i < lA_chunks.size(); ++i) {
-        outputA_matrices[i] = Pair<BoundA, BoundA>(lA_chunks[i], uA_chunks[i]);
+    for ( unsigned i = 0; i < _numInputs && i < lA_chunks.size(); ++i )
+    {
+        outputA_matrices[i] = Pair<BoundA, BoundA>( lA_chunks[i], uA_chunks[i] );
     }
 
-    auto options = last_lA.defined() && last_lA.isTensor()
-        ? last_lA.asTensor().options()
-        : (last_uA.defined() && last_uA.isTensor() ? last_uA.asTensor().options()
-                                                   : torch::TensorOptions().dtype(torch::kFloat32).device(_device));
-    lbias = torch::zeros({1}, options);
-    ubias = torch::zeros({1}, options);
+    auto options =
+        last_lA.defined() && last_lA.isTensor()
+            ? last_lA.asTensor().options()
+            : ( last_uA.defined() && last_uA.isTensor()
+                    ? last_uA.asTensor().options()
+                    : torch::TensorOptions().dtype( torch::kFloat32 ).device( _device ) );
+    lbias = torch::zeros( { 1 }, options );
+    ubias = torch::zeros( { 1 }, options );
 }
 
 BoundedTensor<torch::Tensor> BoundedConcatNode::computeIntervalBoundPropagation(
-    const Vector<BoundedTensor<torch::Tensor>>& inputBounds) {
+    const Vector<BoundedTensor<torch::Tensor>> &inputBounds )
+{
 
-    if (inputBounds.size() != _numInputs) {
-        throw std::runtime_error("BoundedConcatNode: IBP input count mismatch");
+    if ( inputBounds.size() != _numInputs )
+    {
+        throw std::runtime_error( "BoundedConcatNode: IBP input count mismatch" );
     }
 
-    if (inputBounds.empty()) {
-        throw std::runtime_error("BoundedConcatNode: no inputs for IBP");
+    if ( inputBounds.empty() )
+    {
+        throw std::runtime_error( "BoundedConcatNode: no inputs for IBP" );
     }
 
-    if (inputBounds.size() == 1) {
+    if ( inputBounds.size() == 1 )
+    {
         return inputBounds[0];
     }
 
     std::vector<torch::Tensor> lower_bounds;
     std::vector<torch::Tensor> upper_bounds;
 
-    for (unsigned i = 0; i < inputBounds.size(); ++i) {
-        lower_bounds.push_back(inputBounds[i].lower());
-        upper_bounds.push_back(inputBounds[i].upper());
+    for ( unsigned i = 0; i < inputBounds.size(); ++i )
+    {
+        lower_bounds.push_back( inputBounds[i].lower() );
+        upper_bounds.push_back( inputBounds[i].upper() );
     }
 
     int64_t axis = _axis;
-    if (!lower_bounds.empty()) {
+    if ( !lower_bounds.empty() )
+    {
         int64_t ndim = lower_bounds[0].dim();
 
-        if (axis < 0) {
+        if ( axis < 0 )
+        {
             axis += ndim;
         }
 
         // Batch dim may have been removed
-        if (axis >= ndim && axis > 0) {
+        if ( axis >= ndim && axis > 0 )
+        {
             axis = axis - 1;
         }
 
-        if (axis < 0 || axis >= ndim) {
-            throw std::runtime_error("BoundedConcatNode: axis out of range");
+        if ( axis < 0 || axis >= ndim )
+        {
+            throw std::runtime_error( "BoundedConcatNode: axis out of range" );
         }
     }
 
-    torch::Tensor concat_lower = torch::cat(lower_bounds, axis);
-    torch::Tensor concat_upper = torch::cat(upper_bounds, axis);
+    torch::Tensor concat_lower = torch::cat( lower_bounds, axis );
+    torch::Tensor concat_upper = torch::cat( upper_bounds, axis );
 
-    return BoundedTensor<torch::Tensor>(concat_lower, concat_upper);
+    return BoundedTensor<torch::Tensor>( concat_lower, concat_upper );
 }
 
 } // namespace NLR

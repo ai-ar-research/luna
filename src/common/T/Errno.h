@@ -14,10 +14,12 @@
 
 #include <cerrno>
 
-namespace T {
-    inline int errorNumber() {
-        return errno;
-    }
+namespace T
+{
+inline int errorNumber()
+{
+    return errno;
 }
+} // namespace T
 
 #endif // __T__Errno_h__

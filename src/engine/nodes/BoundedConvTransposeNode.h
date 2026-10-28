@@ -16,62 +16,96 @@
 #include "conv/ConvolutionMode.h"
 #include <vector>
 
-namespace NLR {
+namespace NLR
+{
 
-class BoundedConvTransposeNode : public BoundedTorchNode {
+class BoundedConvTransposeNode : public BoundedTorchNode
+{
 public:
-    BoundedConvTransposeNode(const torch::nn::ConvTranspose2d& convTransposeModule,
-                             ConvMode mode = ConvMode::MATRIX,
-                             const String& name = "");
+    BoundedConvTransposeNode( const torch::nn::ConvTranspose2d &convTransposeModule,
+                              ConvMode mode = ConvMode::MATRIX, const String &name = "" );
 
-    NodeType getNodeType() const override { return NodeType::CONVTRANSPOSE; }
-    String getNodeName() const override { return _nodeName; }
-    unsigned getNodeIndex() const override { return _nodeIndex; }
+    NodeType getNodeType() const override
+    {
+        return NodeType::CONVTRANSPOSE;
+    }
+    String getNodeName() const override
+    {
+        return _nodeName;
+    }
+    unsigned getNodeIndex() const override
+    {
+        return _nodeIndex;
+    }
 
-    torch::Tensor forward(const torch::Tensor& input) override;
+    torch::Tensor forward( const torch::Tensor &input ) override;
 
-    void boundBackward(
-        const BoundA& last_lA,
-        const BoundA& last_uA,
-        const Vector<BoundedTensor<torch::Tensor>>& inputBounds,
-        Vector<Pair<BoundA, BoundA>>& outputA_matrices,
-        torch::Tensor& lbias,
-        torch::Tensor& ubias
-    ) override;
+    void boundBackward( const BoundA &last_lA, const BoundA &last_uA,
+                        const Vector<BoundedTensor<torch::Tensor>> &inputBounds,
+                        Vector<Pair<BoundA, BoundA>> &outputA_matrices, torch::Tensor &lbias,
+                        torch::Tensor &ubias ) override;
 
     BoundedTensor<torch::Tensor> computeIntervalBoundPropagation(
-        const Vector<BoundedTensor<torch::Tensor>>& inputBounds) override;
+        const Vector<BoundedTensor<torch::Tensor>> &inputBounds ) override;
 
     unsigned getInputSize() const override;
     unsigned getOutputSize() const override;
-    bool isPerturbed() const override { return true; }
+    bool isPerturbed() const override
+    {
+        return true;
+    }
 
-    unsigned inferOutputSize(unsigned inputSize) const;
+    unsigned inferOutputSize( unsigned inputSize ) const;
 
-    void setInputSize(unsigned size) override;
-    void setOutputSize(unsigned size) override;
+    void setInputSize( unsigned size ) override;
+    void setOutputSize( unsigned size ) override;
 
-    void setNodeIndex(unsigned index) override { _nodeIndex = index; }
-    void setNodeName(const String& name) override { _nodeName = name; }
-    void moveToDevice(const torch::Device& device) override;
+    void setNodeIndex( unsigned index ) override
+    {
+        _nodeIndex = index;
+    }
+    void setNodeName( const String &name ) override
+    {
+        _nodeName = name;
+    }
+    void moveToDevice( const torch::Device &device ) override;
 
-    std::vector<int> getPadding() const { return padding; }
-    std::vector<int> getStride() const { return stride; }
-    std::vector<int> getDilation() const { return dilation; }
-    std::vector<int> getOutputPadding() const { return output_padding; }
-    int getGroups() const { return groups; }
-    bool hasBias() const { return has_bias; }
-    ConvMode getMode() const { return mode; }
+    std::vector<int> getPadding() const
+    {
+        return padding;
+    }
+    std::vector<int> getStride() const
+    {
+        return stride;
+    }
+    std::vector<int> getDilation() const
+    {
+        return dilation;
+    }
+    std::vector<int> getOutputPadding() const
+    {
+        return output_padding;
+    }
+    int getGroups() const
+    {
+        return groups;
+    }
+    bool hasBias() const
+    {
+        return has_bias;
+    }
+    ConvMode getMode() const
+    {
+        return mode;
+    }
 
 private:
-    void initializeFromConvTranspose2d(const torch::nn::ConvTranspose2d& convTransposeModule);
+    void initializeFromConvTranspose2d( const torch::nn::ConvTranspose2d &convTransposeModule );
 
-    BoundA boundOneSide(const BoundA& last_A,
-                        const torch::Tensor& weight,
-                        const torch::Tensor& bias,
-                        torch::Tensor& sum_bias);
+    BoundA boundOneSide( const BoundA &last_A, const torch::Tensor &weight,
+                         const torch::Tensor &bias, torch::Tensor &sum_bias );
 
-    torch::nn::ConvTranspose2d convtranspose2d{nullptr};
+    torch::nn::ConvTranspose2d convtranspose2d{ nullptr };
 
     std::vector<int> padding;
     std::vector<int> stride;

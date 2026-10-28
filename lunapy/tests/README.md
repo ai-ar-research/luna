@@ -108,7 +108,7 @@ pip install pytest pytest-cov numpy
 Common fixtures available in all tests (defined in `conftest.py`):
 
 - `spec_test_onnx`: Path to spec_test.onnx
-- `spec_test_vnnlib`: Path to spec_test.vnnlib  
+- `spec_test_vnnlib`: Path to spec_test.vnnlib
 - `simple_input_bounds`: Dictionary with simple lower/upper bounds
 - `check_resources`: Skips test if resources not found
 
@@ -122,14 +122,14 @@ from lunapy import TorchModel
 
 class TestMyFeature:
     """Tests for my new feature"""
-    
+
     def test_basic_functionality(self, spec_test_onnx, check_resources):
         """Test basic usage of feature"""
         model = TorchModel(spec_test_onnx)
-        
+
         # Your test code here
         assert model is not None
-    
+
     def test_error_handling(self):
         """Test error cases"""
         with pytest.raises(Exception):

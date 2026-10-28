@@ -17,114 +17,117 @@
 #include <limits>
 #include <regex>
 
-double VnnLibInputParser::extractScalar(const String &token)
+double VnnLibInputParser::extractScalar( const String &token )
 {
     std::string::size_type end;
-    double value = std::stod(token.ascii(), &end);
-    if (end != token.length())
+    double value = std::stod( token.ascii(), &end );
+    if ( end != token.length() )
     {
-        throw InputParserError(InputParserError::UNEXPECTED_INPUT,
-                              Stringf("'%s' is not a valid scalar", token.ascii()).ascii());
+        throw InputParserError( InputParserError::UNEXPECTED_INPUT,
+                                Stringf( "'%s' is not a valid scalar", token.ascii() ).ascii() );
     }
     return value;
 }
 
-String VnnLibInputParser::readVnnlibFile(const String &vnnlibFilePath)
+String VnnLibInputParser::readVnnlibFile( const String &vnnlibFilePath )
 {
-    if (!File::exists(vnnlibFilePath))
+    if ( !File::exists( vnnlibFilePath ) )
     {
-        throw InputParserError(InputParserError::FILE_DOESNT_EXIST,
-                              Stringf("VNN-LIB file not found: %s", vnnlibFilePath.ascii()).ascii());
+        throw InputParserError(
+            InputParserError::FILE_DOESNT_EXIST,
+            Stringf( "VNN-LIB file not found: %s", vnnlibFilePath.ascii() ).ascii() );
     }
 
-    File vnnlibFile(vnnlibFilePath);
-    vnnlibFile.open(File::MODE_READ);
+    File vnnlibFile( vnnlibFilePath );
+    vnnlibFile.open( File::MODE_READ );
 
     String vnnlibContent;
     int lineCount = 0;
 
     try
     {
-        while (true)
+        while ( true )
         {
             String line = vnnlibFile.readLine().trim();
             lineCount++;
 
-            if (line == "" || line.substring(0, 1) == ";")
+            if ( line == "" || line.substring( 0, 1 ) == ";" )
                 continue;
 
             vnnlibContent += line;
         }
     }
-    catch (const CommonError &e)
+    catch ( const CommonError &e )
     {
         // READ_FAILED indicates end of file
-        if (e.getCode() != CommonError::READ_FAILED)
+        if ( e.getCode() != CommonError::READ_FAILED )
             throw e;
     }
 
     return vnnlibContent;
 }
 
-Vector<String> VnnLibInputParser::tokenize(const String &vnnlibContent)
+Vector<String> VnnLibInputParser::tokenize( const String &vnnlibContent )
 {
-    std::regex re(R"(\(|\)|[\w\-\\.]+|<=|>=|\+|-|\*)");
+    std::regex re( R"(\(|\)|[\w\-\\.]+|<=|>=|\+|-|\*)" );
 
     auto tokens_begin = std::cregex_token_iterator(
-        vnnlibContent.ascii(), vnnlibContent.ascii() + vnnlibContent.length(), re);
+        vnnlibContent.ascii(), vnnlibContent.ascii() + vnnlibContent.length(), re );
     auto tokens_end = std::cregex_token_iterator();
 
     Vector<String> tokens;
-    for (std::cregex_token_iterator it = tokens_begin; it != tokens_end; ++it)
+    for ( std::cregex_token_iterator it = tokens_begin; it != tokens_end; ++it )
     {
         std::csub_match match = *it;
-        tokens.append(String(match.str().c_str()));
+        tokens.append( String( match.str().c_str() ) );
     }
 
     return tokens;
 }
 
-bool VnnLibInputParser::isInputVariable(const String &varName)
+bool VnnLibInputParser::isInputVariable( const String &varName )
 {
-    List<String> parts = varName.tokenize("_");
-    if (parts.size() != 2)
+    List<String> parts = varName.tokenize( "_" );
+    if ( parts.size() != 2 )
         return false;
 
     return parts.front() == "X";
 }
 
-int VnnLibInputParser::extractVariableIndex(const String &varName)
+int VnnLibInputParser::extractVariableIndex( const String &varName )
 {
-    List<String> parts = varName.tokenize("_");
-    if (parts.size() != 2)
+    List<String> parts = varName.tokenize( "_" );
+    if ( parts.size() != 2 )
     {
-        throw InputParserError(InputParserError::UNEXPECTED_INPUT,
-                              Stringf("Invalid variable name format: %s", varName.ascii()).ascii());
+        throw InputParserError(
+            InputParserError::UNEXPECTED_INPUT,
+            Stringf( "Invalid variable name format: %s", varName.ascii() ).ascii() );
     }
 
     const String &indexStr = parts.back();
-    for (unsigned i = 0; i < indexStr.length(); ++i)
+    for ( unsigned i = 0; i < indexStr.length(); ++i )
     {
-        if (!std::isdigit(indexStr[i]))
+        if ( !std::isdigit( indexStr[i] ) )
         {
-            throw InputParserError(InputParserError::UNEXPECTED_INPUT,
-                                  Stringf("Invalid variable index in: %s", varName.ascii()).ascii());
+            throw InputParserError(
+                InputParserError::UNEXPECTED_INPUT,
+                Stringf( "Invalid variable index in: %s", varName.ascii() ).ascii() );
         }
     }
 
-    return atoi(indexStr.ascii());
+    return atoi( indexStr.ascii() );
 }
 
-void VnnLibInputParser::parseTokens(const Vector<String> &tokens,
-                                    Vector<InputBoundInfo> &inputBounds)
+void VnnLibInputParser::parseTokens( const Vector<String> &tokens,
+                                     Vector<InputBoundInfo> &inputBounds )
 {
     int index = 0;
-    while ((unsigned)index < tokens.size())
+    while ( (unsigned)index < tokens.size() )
     {
-        if (tokens[index] == "(")
+        if ( tokens[index] == "(" )
         {
-            index = parseCommand(index + 1, tokens, inputBounds);
-            if ((unsigned)index < tokens.size() && tokens[index] == ")")
+            index = parseCommand( index + 1, tokens, inputBounds );
+            if ( (unsigned)index < tokens.size() && tokens[index] == ")" )
             {
                 ++index;
             }
@@ -136,97 +139,93 @@ void VnnLibInputParser::parseTokens(const Vector<String> &tokens,
     }
 }
 
-int VnnLibInputParser::parseCommand(int index,
-                                    const Vector<String> &tokens,
-                                    Vector<InputBoundInfo> &inputBounds)
+int VnnLibInputParser::parseCommand( int index, const Vector<String> &tokens,
+                                     Vector<InputBoundInfo> &inputBounds )
 {
-    if ((unsigned)index >= tokens.size())
+    if ( (unsigned)index >= tokens.size() )
         return index;
 
     const String &command = tokens[index];
 
-    if (command == "declare-const")
+    if ( command == "declare-const" )
     {
-        return parseDeclareConst(index + 1, tokens, inputBounds);
+        return parseDeclareConst( index + 1, tokens, inputBounds );
     }
-    else if (command == "assert")
+    else if ( command == "assert" )
     {
-        return parseAssert(index + 1, tokens, inputBounds);
+        return parseAssert( index + 1, tokens, inputBounds );
     }
 
     int depth = 1;
     ++index;
-    while ((unsigned)index < tokens.size() && depth > 0)
+    while ( (unsigned)index < tokens.size() && depth > 0 )
     {
-        if (tokens[index] == "(")
+        if ( tokens[index] == "(" )
             ++depth;
-        else if (tokens[index] == ")")
+        else if ( tokens[index] == ")" )
             --depth;
         ++index;
     }
     return index - 1;
 }
 
-int VnnLibInputParser::parseDeclareConst(int index,
-                                         const Vector<String> &tokens,
-                                         Vector<InputBoundInfo> &inputBounds)
+int VnnLibInputParser::parseDeclareConst( int index, const Vector<String> &tokens,
+                                          Vector<InputBoundInfo> &inputBounds )
 {
-    if ((unsigned)index + 1 >= tokens.size())
+    if ( (unsigned)index + 1 >= tokens.size() )
         return index;
 
     const String &varName = tokens[index];
     const String &varType = tokens[index + 1];
 
-    if (varType != "Real")
+    if ( varType != "Real" )
     {
         return index + 2;
     }
 
-    if (isInputVariable(varName))
+    if ( isInputVariable( varName ) )
     {
-        int varIndex = extractVariableIndex(varName);
+        int varIndex = extractVariableIndex( varName );
 
-        while ((unsigned)varIndex >= inputBounds.size())
+        while ( (unsigned)varIndex >= inputBounds.size() )
         {
-            inputBounds.append(InputBoundInfo());
+            inputBounds.append( InputBoundInfo() );
         }
     }
 
     return index + 2;
 }
 
-int VnnLibInputParser::parseAssert(int index,
-                                   const Vector<String> &tokens,
-                                   Vector<InputBoundInfo> &inputBounds)
+int VnnLibInputParser::parseAssert( int index, const Vector<String> &tokens,
+                                    Vector<InputBoundInfo> &inputBounds )
 {
-    if ((unsigned)index >= tokens.size())
+    if ( (unsigned)index >= tokens.size() )
         return index;
 
-    if (tokens[index] == "(")
+    if ( tokens[index] == "(" )
     {
-        return parseCondition(index + 1, tokens, inputBounds);
+        return parseCondition( index + 1, tokens, inputBounds );
     }
 
     return index;
 }
 
-int VnnLibInputParser::parseCondition(int index,
-                                     const Vector<String> &tokens,
-                                     Vector<InputBoundInfo> &inputBounds)
+int VnnLibInputParser::parseCondition( int index, const Vector<String> &tokens,
+                                       Vector<InputBoundInfo> &inputBounds )
 {
-    if ((unsigned)index >= tokens.size())
+    if ( (unsigned)index >= tokens.size() )
         return index;
 
     const String &op = tokens[index];
 
-    if (op == "and" || op == "AND" || op == "And")
+    if ( op == "and" || op == "AND" || op == "And" )
     {
         ++index;
-        while ((unsigned)index < tokens.size() && tokens[index] != ")")
+        while ( (unsigned)index < tokens.size() && tokens[index] != ")" )
         {
-            if (tokens[index] == "(")
+            if ( tokens[index] == "(" )
             {
-                index = parseCondition(index + 1, tokens, inputBounds);
+                index = parseCondition( index + 1, tokens, inputBounds );
             }
             else
             {
@@ -235,15 +234,15 @@ int VnnLibInputParser::parseCondition(int index,
         }
         return index + 1; // Skip closing )
     }
-    else if (op == "or" || op == "OR" || op == "Or")
+    else if ( op == "or" || op == "OR" || op == "Or" )
     {
         // OR branches may embed input bounds alongside output constraints
         ++index;
-        while ((unsigned)index < tokens.size() && tokens[index] != ")")
+        while ( (unsigned)index < tokens.size() && tokens[index] != ")" )
         {
-            if (tokens[index] == "(")
+            if ( tokens[index] == "(" )
             {
-                index = parseCondition(index + 1, tokens, inputBounds);
+                index = parseCondition( index + 1, tokens, inputBounds );
             }
             else
             {
@@ -252,10 +251,10 @@ int VnnLibInputParser::parseCondition(int index,
         }
         return index + 1; // Skip closing )
     }
-    else if (op == "<=" || op == ">=")
+    else if ( op == "<=" || op == ">=" )
     {
         ++index;
-        if ((unsigned)index + 1 >= tokens.size())
+        if ( (unsigned)index + 1 >= tokens.size() )
             return index;
 
         String token1 = tokens[index];
@@ -265,13 +264,13 @@ int VnnLibInputParser::parseCondition(int index,
         String valueStr;
         bool varFirst = true;
 
-        if (isInputVariable(token1))
+        if ( isInputVariable( token1 ) )
         {
             varName = token1;
             valueStr = token2;
             varFirst = true;
         }
-        else if (isInputVariable(token2))
+        else if ( isInputVariable( token2 ) )
         {
             varName = token2;
             valueStr = token1;
@@ -280,23 +279,23 @@ int VnnLibInputParser::parseCondition(int index,
         else
         {
             index += 2;
-            while ((unsigned)index < tokens.size() && tokens[index] != ")")
+            while ( (unsigned)index < tokens.size() && tokens[index] != ")" )
                 ++index;
             return index + 1;
         }
 
-        int varIndex = extractVariableIndex(varName);
+        int varIndex = extractVariableIndex( varName );
 
-        while ((unsigned)varIndex >= inputBounds.size())
+        while ( (unsigned)varIndex >= inputBounds.size() )
         {
-            inputBounds.append(InputBoundInfo());
+            inputBounds.append( InputBoundInfo() );
         }
 
-        double value = extractScalar(valueStr);
+        double value = extractScalar( valueStr );
 
-        if (op == "<=")
+        if ( op == "<=" )
         {
-            if (varFirst)
+            if ( varFirst )
             {
                 inputBounds[varIndex].hasUpperBound = true;
                 inputBounds[varIndex].upperBound = value;
@@ -309,7 +308,7 @@ int VnnLibInputParser::parseCondition(int index,
         }
         else // op == ">="
         {
-            if (varFirst)
+            if ( varFirst )
             {
                 inputBounds[varIndex].hasLowerBound = true;
                 inputBounds[varIndex].lowerBound = value;
@@ -322,37 +321,37 @@ int VnnLibInputParser::parseCondition(int index,
         }
 
         index += 2;
-        while ((unsigned)index < tokens.size() && tokens[index] != ")")
+        while ( (unsigned)index < tokens.size() && tokens[index] != ")" )
             ++index;
         return index + 1;
     }
 
-    while ((unsigned)index < tokens.size() && tokens[index] != ")")
+    while ( (unsigned)index < tokens.size() && tokens[index] != ")" )
         ++index;
     return index + 1;
 }
 
-BoundedTensor<torch::Tensor> VnnLibInputParser::parseInputBounds(const String &vnnlibFilePath,
-                                                                  unsigned expectedInputSize)
+BoundedTensor<torch::Tensor> VnnLibInputParser::parseInputBounds( const String &vnnlibFilePath,
+                                                                  unsigned expectedInputSize )
 {
-    String content = readVnnlibFile(vnnlibFilePath);
-    Vector<String> tokens = tokenize(content);
+    String content = readVnnlibFile( vnnlibFilePath );
+    Vector<String> tokens = tokenize( content );
 
     Vector<InputBoundInfo> inputBounds;
-    parseTokens(tokens, inputBounds);
+    parseTokens( tokens, inputBounds );
 
-    while (inputBounds.size() < expectedInputSize)
+    while ( inputBounds.size() < expectedInputSize )
     {
-        inputBounds.append(InputBoundInfo());
+        inputBounds.append( InputBoundInfo() );
     }
 
     // double precision first to avoid truncation during parsing
-    torch::Tensor lowerBounds = torch::zeros({(long)expectedInputSize}, torch::kFloat64);
-    torch::Tensor upperBounds = torch::zeros({(long)expectedInputSize}, torch::kFloat64);
+    torch::Tensor lowerBounds = torch::zeros( { (long)expectedInputSize }, torch::kFloat64 );
+    torch::Tensor upperBounds = torch::zeros( { (long)expectedInputSize }, torch::kFloat64 );
 
-    for (unsigned i = 0; i < expectedInputSize; ++i)
+    for ( unsigned i = 0; i < expectedInputSize; ++i )
     {
-        if (i < inputBounds.size())
+        if ( i < inputBounds.size() )
         {
             lowerBounds[i] = inputBounds[i].lowerBound;
             upperBounds[i] = inputBounds[i].upperBound;
@@ -365,61 +364,61 @@ BoundedTensor<torch::Tensor> VnnLibInputParser::parseInputBounds(const String &v
     }
 
     // match Python float32 precision
-    lowerBounds = lowerBounds.to(torch::kFloat32);
-    upperBounds = upperBounds.to(torch::kFloat32);
+    lowerBounds = lowerBounds.to( torch::kFloat32 );
+    upperBounds = upperBounds.to( torch::kFloat32 );
 
-    return BoundedTensor<torch::Tensor>(lowerBounds, upperBounds);
+    return BoundedTensor<torch::Tensor>( lowerBounds, upperBounds );
 }
 
-bool VnnLibInputParser::isOutputVariable(const String &varName)
+bool VnnLibInputParser::isOutputVariable( const String &varName )
 {
-    List<String> parts = varName.tokenize("_");
-    if (parts.size() != 2)
+    List<String> parts = varName.tokenize( "_" );
+    if ( parts.size() != 2 )
         return false;
 
     return parts.front() == "Y";
 }
 
-bool VnnLibInputParser::isScalar(const String &token)
+bool VnnLibInputParser::isScalar( const String &token )
 {
-    if (token.length() == 0)
+    if ( token.length() == 0 )
         return false;
 
     unsigned start = 0;
-    if (token[0] == '-')
+    if ( token[0] == '-' )
     {
-        if (token.length() == 1)
+        if ( token.length() == 1 )
             return false;
         start = 1;
     }
 
     bool hasDecimal = false;
     bool hasDigit = false;
-    for (unsigned i = start; i < token.length(); ++i)
+    for ( unsigned i = start; i < token.length(); ++i )
     {
         char c = token[i];
-        if (c == '.')
+        if ( c == '.' )
         {
-            if (hasDecimal)
+            if ( hasDecimal )
                 return false;
             hasDecimal = true;
         }
-        else if (std::isdigit(c))
+        else if ( std::isdigit( c ) )
         {
             hasDigit = true;
         }
-        else if (c == 'e' || c == 'E')
+        else if ( c == 'e' || c == 'E' )
         {
-            if (!hasDigit || i + 1 >= token.length())
+            if ( !hasDigit || i + 1 >= token.length() )
                 return false;
             unsigned expStart = i + 1;
-            if (token[expStart] == '-' || token[expStart] == '+')
+            if ( token[expStart] == '-' || token[expStart] == '+' )
             {
                 ++expStart;
             }
-            for (unsigned j = expStart; j < token.length(); ++j)
+            for ( unsigned j = expStart; j < token.length(); ++j )
             {
-                if (!std::isdigit(token[j]))
+                if ( !std::isdigit( token[j] ) )
                     return false;
             }
             return true;
@@ -432,16 +431,16 @@ bool VnnLibInputParser::isScalar(const String &token)
     return hasDigit;
 }
 
-void VnnLibInputParser::parseOutputTokens(const Vector<String> &tokens,
-                                          NLR::OutputConstraintSet &outputConstraints)
+void VnnLibInputParser::parseOutputTokens( const Vector<String> &tokens,
+                                           NLR::OutputConstraintSet &outputConstraints )
 {
     int index = 0;
-    while ((unsigned)index < tokens.size())
+    while ( (unsigned)index < tokens.size() )
     {
-        if (tokens[index] == "(")
+        if ( tokens[index] == "(" )
         {
-            index = parseOutputCommand(index + 1, tokens, outputConstraints);
-            if ((unsigned)index < tokens.size() && tokens[index] == ")")
+            index = parseOutputCommand( index + 1, tokens, outputConstraints );
+            if ( (unsigned)index < tokens.size() && tokens[index] == ")" )
             {
                 ++index;
             }
@@ -453,150 +452,146 @@ void VnnLibInputParser::parseOutputTokens(const Vector<String> &tokens,
     }
 }
 
-int VnnLibInputParser::parseOutputCommand(int index,
-                                          const Vector<String> &tokens,
-                                          NLR::OutputConstraintSet &outputConstraints)
+int VnnLibInputParser::parseOutputCommand( int index, const Vector<String> &tokens,
+                                           NLR::OutputConstraintSet &outputConstraints )
 {
-    if ((unsigned)index >= tokens.size())
+    if ( (unsigned)index >= tokens.size() )
         return index;
 
     const String &command = tokens[index];
 
-    if (command == "assert")
+    if ( command == "assert" )
     {
-        return parseOutputAssert(index + 1, tokens, outputConstraints);
+        return parseOutputAssert( index + 1, tokens, outputConstraints );
     }
 
     int depth = 1;
     ++index;
-    while ((unsigned)index < tokens.size() && depth > 0)
+    while ( (unsigned)index < tokens.size() && depth > 0 )
     {
-        if (tokens[index] == "(")
+        if ( tokens[index] == "(" )
             ++depth;
-        else if (tokens[index] == ")")
+        else if ( tokens[index] == ")" )
             --depth;
         ++index;
     }
     return index - 1;
 }
 
-int VnnLibInputParser::parseOutputAssert(int index,
-                                         const Vector<String> &tokens,
-                                         NLR::OutputConstraintSet &outputConstraints)
+int VnnLibInputParser::parseOutputAssert( int index, const Vector<String> &tokens,
+                                          NLR::OutputConstraintSet &outputConstraints )
 {
-    if ((unsigned)index >= tokens.size())
+    if ( (unsigned)index >= tokens.size() )
         return index;
 
-    if (tokens[index] == "(")
+    if ( tokens[index] == "(" )
     {
-        return parseOutputCondition(index + 1, tokens, outputConstraints);
+        return parseOutputCondition( index + 1, tokens, outputConstraints );
     }
 
     return index;
 }
 
-int VnnLibInputParser::parseLinearExpression(int index,
-                                             const Vector<String> &tokens,
-                                             Vector<NLR::OutputTerm> &terms,
-                                             double &scalarSum)
+int VnnLibInputParser::parseLinearExpression( int index, const Vector<String> &tokens,
+                                              Vector<NLR::OutputTerm> &terms, double &scalarSum )
 {
-    if ((unsigned)index >= tokens.size())
+    if ( (unsigned)index >= tokens.size() )
         return index;
 
     const String &token = tokens[index];
 
-    if (isOutputVariable(token))
+    if ( isOutputVariable( token ) )
     {
-        int varIndex = extractVariableIndex(token);
-        terms.append(NLR::OutputTerm(varIndex, 1.0));
+        int varIndex = extractVariableIndex( token );
+        terms.append( NLR::OutputTerm( varIndex, 1.0 ) );
         return index + 1;
     }
 
-    if (isScalar(token))
+    if ( isScalar( token ) )
     {
-        scalarSum += extractScalar(token);
+        scalarSum += extractScalar( token );
         return index + 1;
     }
 
-    if (token == "(")
+    if ( token == "(" )
     {
         ++index;
-        if ((unsigned)index >= tokens.size())
+        if ( (unsigned)index >= tokens.size() )
             return index;
 
         const String &op = tokens[index];
         ++index;
 
-        if (op == "+")
+        if ( op == "+" )
         {
-            while ((unsigned)index < tokens.size() && tokens[index] != ")")
+            while ( (unsigned)index < tokens.size() && tokens[index] != ")" )
             {
-                index = parseLinearExpression(index, tokens, terms, scalarSum);
+                index = parseLinearExpression( index, tokens, terms, scalarSum );
             }
-            if ((unsigned)index < tokens.size() && tokens[index] == ")")
+            if ( (unsigned)index < tokens.size() && tokens[index] == ")" )
                 ++index;
             return index;
         }
-        else if (op == "-")
+        else if ( op == "-" )
         {
             Vector<NLR::OutputTerm> firstTerms;
             double firstScalar = 0.0;
-            index = parseLinearExpression(index, tokens, firstTerms, firstScalar);
-            for (unsigned i = 0; i < firstTerms.size(); ++i)
+            index = parseLinearExpression( index, tokens, firstTerms, firstScalar );
+            for ( unsigned i = 0; i < firstTerms.size(); ++i )
             {
-                terms.append(firstTerms[i]);
+                terms.append( firstTerms[i] );
             }
             scalarSum += firstScalar;
 
-            if ((unsigned)index < tokens.size() && tokens[index] != ")")
+            if ( (unsigned)index < tokens.size() && tokens[index] != ")" )
             {
                 Vector<NLR::OutputTerm> secondTerms;
                 double secondScalar = 0.0;
-                index = parseLinearExpression(index, tokens, secondTerms, secondScalar);
-                for (unsigned i = 0; i < secondTerms.size(); ++i)
+                index = parseLinearExpression( index, tokens, secondTerms, secondScalar );
+                for ( unsigned i = 0; i < secondTerms.size(); ++i )
                 {
                     NLR::OutputTerm negatedTerm = secondTerms[i];
                     negatedTerm.coefficient *= -1.0;
-                    terms.append(negatedTerm);
+                    terms.append( negatedTerm );
                 }
                 scalarSum -= secondScalar;
             }
 
-            while ((unsigned)index < tokens.size() && tokens[index] != ")")
+            while ( (unsigned)index < tokens.size() && tokens[index] != ")" )
                 ++index;
-            if ((unsigned)index < tokens.size() && tokens[index] == ")")
+            if ( (unsigned)index < tokens.size() && tokens[index] == ")" )
                 ++index;
             return index;
         }
-        else if (op == "*")
+        else if ( op == "*" )
         {
             double coefficient = 1.0;
             int varIndex = -1;
 
-            while ((unsigned)index < tokens.size() && tokens[index] != ")")
+            while ( (unsigned)index < tokens.size() && tokens[index] != ")" )
             {
                 const String &subToken = tokens[index];
 
-                if (isScalar(subToken))
+                if ( isScalar( subToken ) )
                 {
-                    coefficient *= extractScalar(subToken);
+                    coefficient *= extractScalar( subToken );
                     ++index;
                 }
-                else if (isOutputVariable(subToken))
+                else if ( isOutputVariable( subToken ) )
                 {
-                    varIndex = extractVariableIndex(subToken);
+                    varIndex = extractVariableIndex( subToken );
                     ++index;
                 }
-                else if (subToken == "(")
+                else if ( subToken == "(" )
                 {
                     Vector<NLR::OutputTerm> subTerms;
                     double subScalar = 0.0;
-                    index = parseLinearExpression(index, tokens, subTerms, subScalar);
-                    for (unsigned i = 0; i < subTerms.size(); ++i)
+                    index = parseLinearExpression( index, tokens, subTerms, subScalar );
+                    for ( unsigned i = 0; i < subTerms.size(); ++i )
                     {
                         NLR::OutputTerm scaledTerm = subTerms[i];
                         scaledTerm.coefficient *= coefficient;
-                        terms.append(scaledTerm);
+                        terms.append( scaledTerm );
                     }
                     scalarSum += subScalar * coefficient;
                     coefficient = 1.0;
@@ -608,23 +603,23 @@ int VnnLibInputParser::parseLinearExpression(int index,
                 }
             }
 
-            if (varIndex >= 0)
+            if ( varIndex >= 0 )
             {
-                terms.append(NLR::OutputTerm(varIndex, coefficient));
+                terms.append( NLR::OutputTerm( varIndex, coefficient ) );
             }
 
-            if ((unsigned)index < tokens.size() && tokens[index] == ")")
+            if ( (unsigned)index < tokens.size() && tokens[index] == ")" )
                 ++index;
             return index;
         }
         else
         {
             int depth = 1;
-            while ((unsigned)index < tokens.size() && depth > 0)
+            while ( (unsigned)index < tokens.size() && depth > 0 )
             {
-                if (tokens[index] == "(")
+                if ( tokens[index] == "(" )
                     ++depth;
-                else if (tokens[index] == ")")
+                else if ( tokens[index] == ")" )
                     --depth;
                 ++index;
             }
@@ -635,23 +630,22 @@ int VnnLibInputParser::parseLinearExpression(int index,
     return index + 1;
 }
 
-int VnnLibInputParser::parseOutputCondition(int index,
-                                            const Vector<String> &tokens,
-                                            NLR::OutputConstraintSet &outputConstraints)
+int VnnLibInputParser::parseOutputCondition( int index, const Vector<String> &tokens,
+                                             NLR::OutputConstraintSet &outputConstraints )
 {
-    if ((unsigned)index >= tokens.size())
+    if ( (unsigned)index >= tokens.size() )
         return index;
 
     const String &op = tokens[index];
 
-    if (op == "and" || op == "AND" || op == "And")
+    if ( op == "and" || op == "AND" || op == "And" )
     {
         ++index;
-        while ((unsigned)index < tokens.size() && tokens[index] != ")")
+        while ( (unsigned)index < tokens.size() && tokens[index] != ")" )
         {
-            if (tokens[index] == "(")
+            if ( tokens[index] == "(" )
             {
-                index = parseOutputCondition(index + 1, tokens, outputConstraints);
+                index = parseOutputCondition( index + 1, tokens, outputConstraints );
             }
             else
             {
@@ -660,23 +654,23 @@ int VnnLibInputParser::parseOutputCondition(int index,
         }
         return index + 1; // Skip closing )
     }
-    else if (op == "or" || op == "OR" || op == "Or")
+    else if ( op == "or" || op == "OR" || op == "Or" )
     {
         ++index;
-        
+
         unsigned outputDim = outputConstraints.getOutputDimension();
         Vector<Vector<NLR::OutputConstraint>> branches;
-        
-        while ((unsigned)index < tokens.size() && tokens[index] != ")")
+
+        while ( (unsigned)index < tokens.size() && tokens[index] != ")" )
         {
-            if (tokens[index] == "(")
+            if ( tokens[index] == "(" )
             {
                 Vector<NLR::OutputConstraint> branchConstraints;
-                index = parseOutputBranch(index + 1, tokens, branchConstraints, outputDim);
-                
-                if (branchConstraints.size() > 0)
+                index = parseOutputBranch( index + 1, tokens, branchConstraints, outputDim );
+
+                if ( branchConstraints.size() > 0 )
                 {
-                    branches.append(branchConstraints);
+                    branches.append( branchConstraints );
                 }
             }
             else
@@ -684,18 +678,18 @@ int VnnLibInputParser::parseOutputCondition(int index,
                 ++index;
             }
         }
-        
-        for (unsigned i = 0; i < branches.size(); ++i)
+
+        for ( unsigned i = 0; i < branches.size(); ++i )
         {
-            outputConstraints.addORBranch(branches[i]);
+            outputConstraints.addORBranch( branches[i] );
         }
-        
+
         return index + 1;
     }
-    else if (op == "<=" || op == ">=")
+    else if ( op == "<=" || op == ">=" )
     {
         ++index;
-        if ((unsigned)index >= tokens.size())
+        if ( (unsigned)index >= tokens.size() )
             return index;
 
         Vector<NLR::OutputTerm> lhsTerms;
@@ -703,19 +697,19 @@ int VnnLibInputParser::parseOutputCondition(int index,
         double lhsScalar = 0.0;
         double rhsScalar = 0.0;
 
-        if (tokens[index] == "(")
+        if ( tokens[index] == "(" )
         {
-            index = parseLinearExpression(index, tokens, lhsTerms, lhsScalar);
+            index = parseLinearExpression( index, tokens, lhsTerms, lhsScalar );
         }
-        else if (isOutputVariable(tokens[index]))
+        else if ( isOutputVariable( tokens[index] ) )
         {
-            int varIndex = extractVariableIndex(tokens[index]);
-            lhsTerms.append(NLR::OutputTerm(varIndex, 1.0));
+            int varIndex = extractVariableIndex( tokens[index] );
+            lhsTerms.append( NLR::OutputTerm( varIndex, 1.0 ) );
             ++index;
         }
-        else if (isScalar(tokens[index]))
+        else if ( isScalar( tokens[index] ) )
         {
-            lhsScalar = extractScalar(tokens[index]);
+            lhsScalar = extractScalar( tokens[index] );
             ++index;
         }
         else
@@ -723,21 +717,21 @@ int VnnLibInputParser::parseOutputCondition(int index,
             ++index;
         }
 
-        if ((unsigned)index < tokens.size() && tokens[index] != ")")
+        if ( (unsigned)index < tokens.size() && tokens[index] != ")" )
         {
-            if (tokens[index] == "(")
+            if ( tokens[index] == "(" )
             {
-                index = parseLinearExpression(index, tokens, rhsTerms, rhsScalar);
+                index = parseLinearExpression( index, tokens, rhsTerms, rhsScalar );
             }
-            else if (isOutputVariable(tokens[index]))
+            else if ( isOutputVariable( tokens[index] ) )
             {
-                int varIndex = extractVariableIndex(tokens[index]);
-                rhsTerms.append(NLR::OutputTerm(varIndex, 1.0));
+                int varIndex = extractVariableIndex( tokens[index] );
+                rhsTerms.append( NLR::OutputTerm( varIndex, 1.0 ) );
                 ++index;
             }
-            else if (isScalar(tokens[index]))
+            else if ( isScalar( tokens[index] ) )
             {
-                rhsScalar = extractScalar(tokens[index]);
+                rhsScalar = extractScalar( tokens[index] );
                 ++index;
             }
             else
@@ -746,30 +740,30 @@ int VnnLibInputParser::parseOutputCondition(int index,
             }
         }
 
-        bool hasOutputVar = (lhsTerms.size() > 0 || rhsTerms.size() > 0);
+        bool hasOutputVar = ( lhsTerms.size() > 0 || rhsTerms.size() > 0 );
 
-        if (hasOutputVar)
+        if ( hasOutputVar )
         {
             NLR::OutputConstraint constraint;
 
             // normalize to C*y <= threshold
-            for (unsigned i = 0; i < lhsTerms.size(); ++i)
+            for ( unsigned i = 0; i < lhsTerms.size(); ++i )
             {
-                constraint.terms.append(lhsTerms[i]);
+                constraint.terms.append( lhsTerms[i] );
             }
 
-            for (unsigned i = 0; i < rhsTerms.size(); ++i)
+            for ( unsigned i = 0; i < rhsTerms.size(); ++i )
             {
                 NLR::OutputTerm negated = rhsTerms[i];
                 negated.coefficient *= -1.0;
-                constraint.terms.append(negated);
+                constraint.terms.append( negated );
             }
 
             double threshold = rhsScalar - lhsScalar;
 
-            if (op == ">=")
+            if ( op == ">=" )
             {
-                for (unsigned i = 0; i < constraint.terms.size(); ++i)
+                for ( unsigned i = 0; i < constraint.terms.size(); ++i )
                 {
                     constraint.terms[i].coefficient *= -1.0;
                 }
@@ -777,37 +771,36 @@ int VnnLibInputParser::parseOutputCondition(int index,
             }
 
             constraint.threshold = threshold;
-            outputConstraints.addConstraint(constraint);
+            outputConstraints.addConstraint( constraint );
         }
 
-        while ((unsigned)index < tokens.size() && tokens[index] != ")")
+        while ( (unsigned)index < tokens.size() && tokens[index] != ")" )
             ++index;
         return index + 1;
     }
 
-    while ((unsigned)index < tokens.size() && tokens[index] != ")")
+    while ( (unsigned)index < tokens.size() && tokens[index] != ")" )
         ++index;
     return index + 1;
 }
 
-int VnnLibInputParser::parseOutputBranch(int index,
-                                          const Vector<String> &tokens,
+int VnnLibInputParser::parseOutputBranch( int index, const Vector<String> &tokens,
                                           Vector<NLR::OutputConstraint> &branchConstraints,
-                                          unsigned outputDim)
+                                          unsigned outputDim )
 {
-    if ((unsigned)index >= tokens.size())
+    if ( (unsigned)index >= tokens.size() )
         return index;
 
     const String &op = tokens[index];
 
-    if (op == "and" || op == "AND" || op == "And")
+    if ( op == "and" || op == "AND" || op == "And" )
     {
         ++index;
-        while ((unsigned)index < tokens.size() && tokens[index] != ")")
+        while ( (unsigned)index < tokens.size() && tokens[index] != ")" )
         {
-            if (tokens[index] == "(")
+            if ( tokens[index] == "(" )
             {
-                index = parseOutputBranch(index + 1, tokens, branchConstraints, outputDim);
+                index = parseOutputBranch( index + 1, tokens, branchConstraints, outputDim );
             }
             else
             {
@@ -816,10 +809,10 @@ int VnnLibInputParser::parseOutputBranch(int index,
         }
         return index + 1; // Skip closing )
     }
-    else if (op == "<=" || op == ">=")
+    else if ( op == "<=" || op == ">=" )
     {
         ++index;
-        if ((unsigned)index >= tokens.size())
+        if ( (unsigned)index >= tokens.size() )
             return index;
 
         Vector<NLR::OutputTerm> lhsTerms;
@@ -827,19 +820,19 @@ int VnnLibInputParser::parseOutputBranch(int index,
         double lhsScalar = 0.0;
         double rhsScalar = 0.0;
 
-        if (tokens[index] == "(")
+        if ( tokens[index] == "(" )
         {
-            index = parseLinearExpression(index, tokens, lhsTerms, lhsScalar);
+            index = parseLinearExpression( index, tokens, lhsTerms, lhsScalar );
         }
-        else if (isOutputVariable(tokens[index]))
+        else if ( isOutputVariable( tokens[index] ) )
         {
-            int varIndex = extractVariableIndex(tokens[index]);
-            lhsTerms.append(NLR::OutputTerm(varIndex, 1.0));
+            int varIndex = extractVariableIndex( tokens[index] );
+            lhsTerms.append( NLR::OutputTerm( varIndex, 1.0 ) );
             ++index;
         }
-        else if (isScalar(tokens[index]))
+        else if ( isScalar( tokens[index] ) )
         {
-            lhsScalar = extractScalar(tokens[index]);
+            lhsScalar = extractScalar( tokens[index] );
             ++index;
         }
         else
@@ -847,21 +840,21 @@ int VnnLibInputParser::parseOutputBranch(int index,
             ++index;
         }
 
-        if ((unsigned)index < tokens.size() && tokens[index] != ")")
+        if ( (unsigned)index < tokens.size() && tokens[index] != ")" )
         {
-            if (tokens[index] == "(")
+            if ( tokens[index] == "(" )
             {
-                index = parseLinearExpression(index, tokens, rhsTerms, rhsScalar);
+                index = parseLinearExpression( index, tokens, rhsTerms, rhsScalar );
             }
-            else if (isOutputVariable(tokens[index]))
+            else if ( isOutputVariable( tokens[index] ) )
             {
-                int varIndex = extractVariableIndex(tokens[index]);
-                rhsTerms.append(NLR::OutputTerm(varIndex, 1.0));
+                int varIndex = extractVariableIndex( tokens[index] );
+                rhsTerms.append( NLR::OutputTerm( varIndex, 1.0 ) );
                 ++index;
             }
-            else if (isScalar(tokens[index]))
+            else if ( isScalar( tokens[index] ) )
             {
-                rhsScalar = extractScalar(tokens[index]);
+                rhsScalar = extractScalar( tokens[index] );
                 ++index;
             }
             else
@@ -870,30 +863,30 @@ int VnnLibInputParser::parseOutputBranch(int index,
             }
         }
 
-        bool hasOutputVar = (lhsTerms.size() > 0 || rhsTerms.size() > 0);
+        bool hasOutputVar = ( lhsTerms.size() > 0 || rhsTerms.size() > 0 );
 
-        if (hasOutputVar)
+        if ( hasOutputVar )
         {
             NLR::OutputConstraint constraint;
 
             // normalize to C*y <= threshold
-            for (unsigned i = 0; i < lhsTerms.size(); ++i)
+            for ( unsigned i = 0; i < lhsTerms.size(); ++i )
             {
-                constraint.terms.append(lhsTerms[i]);
+                constraint.terms.append( lhsTerms[i] );
             }
 
-            for (unsigned i = 0; i < rhsTerms.size(); ++i)
+            for ( unsigned i = 0; i < rhsTerms.size(); ++i )
             {
                 NLR::OutputTerm negated = rhsTerms[i];
                 negated.coefficient *= -1.0;
-                constraint.terms.append(negated);
+                constraint.terms.append( negated );
             }
 
             double threshold = rhsScalar - lhsScalar;
 
-            if (op == ">=")
+            if ( op == ">=" )
             {
-                for (unsigned i = 0; i < constraint.terms.size(); ++i)
+                for ( unsigned i = 0; i < constraint.terms.size(); ++i )
                 {
                     constraint.terms[i].coefficient *= -1.0;
                 }
@@ -901,43 +894,43 @@ int VnnLibInputParser::parseOutputBranch(int index,
             }
 
             constraint.threshold = threshold;
-            branchConstraints.append(constraint);
+            branchConstraints.append( constraint );
         }
 
-        while ((unsigned)index < tokens.size() && tokens[index] != ")")
+        while ( (unsigned)index < tokens.size() && tokens[index] != ")" )
             ++index;
         return index + 1;
     }
 
-    while ((unsigned)index < tokens.size() && tokens[index] != ")")
+    while ( (unsigned)index < tokens.size() && tokens[index] != ")" )
         ++index;
     return index + 1;
 }
 
-NLR::OutputConstraintSet VnnLibInputParser::parseOutputConstraints(const String &vnnlibFilePath,
-                                                                    unsigned expectedOutputSize)
+NLR::OutputConstraintSet VnnLibInputParser::parseOutputConstraints( const String &vnnlibFilePath,
+                                                                    unsigned expectedOutputSize )
 {
-    String content = readVnnlibFile(vnnlibFilePath);
-    Vector<String> tokens = tokenize(content);
+    String content = readVnnlibFile( vnnlibFilePath );
+    Vector<String> tokens = tokenize( content );
 
     NLR::OutputConstraintSet outputConstraints;
-    outputConstraints.setOutputDimension(expectedOutputSize);
-    parseOutputTokens(tokens, outputConstraints);
+    outputConstraints.setOutputDimension( expectedOutputSize );
+    parseOutputTokens( tokens, outputConstraints );
 
     return outputConstraints;
 }
 
-void VnnLibInputParser::parseTokensBoth(const Vector<String> &tokens,
-                                        Vector<InputBoundInfo> &inputBounds,
-                                        NLR::OutputConstraintSet &outputConstraints)
+void VnnLibInputParser::parseTokensBoth( const Vector<String> &tokens,
+                                         Vector<InputBoundInfo> &inputBounds,
+                                         NLR::OutputConstraintSet &outputConstraints )
 {
     int index = 0;
-    while ((unsigned)index < tokens.size())
+    while ( (unsigned)index < tokens.size() )
     {
-        if (tokens[index] == "(")
+        if ( tokens[index] == "(" )
         {
-            index = parseCommandBoth(index + 1, tokens, inputBounds, outputConstraints);
-            if ((unsigned)index < tokens.size() && tokens[index] == ")")
+            index = parseCommandBoth( index + 1, tokens, inputBounds, outputConstraints );
+            if ( (unsigned)index < tokens.size() && tokens[index] == ")" )
             {
                 ++index;
             }
@@ -949,72 +942,69 @@ void VnnLibInputParser::parseTokensBoth(const Vector<String> &tokens,
     }
 }
 
-int VnnLibInputParser::parseCommandBoth(int index,
-                                        const Vector<String> &tokens,
-                                        Vector<InputBoundInfo> &inputBounds,
-                                        NLR::OutputConstraintSet &outputConstraints)
+int VnnLibInputParser::parseCommandBoth( int index, const Vector<String> &tokens,
+                                         Vector<InputBoundInfo> &inputBounds,
+                                         NLR::OutputConstraintSet &outputConstraints )
 {
-    if ((unsigned)index >= tokens.size())
+    if ( (unsigned)index >= tokens.size() )
         return index;
 
     const String &command = tokens[index];
 
-    if (command == "declare-const")
+    if ( command == "declare-const" )
     {
-        return parseDeclareConst(index + 1, tokens, inputBounds);
+        return parseDeclareConst( index + 1, tokens, inputBounds );
     }
-    else if (command == "assert")
+    else if ( command == "assert" )
     {
-        return parseAssertBoth(index + 1, tokens, inputBounds, outputConstraints);
+        return parseAssertBoth( index + 1, tokens, inputBounds, outputConstraints );
     }
 
     int depth = 1;
     ++index;
-    while ((unsigned)index < tokens.size() && depth > 0)
+    while ( (unsigned)index < tokens.size() && depth > 0 )
     {
-        if (tokens[index] == "(")
+        if ( tokens[index] == "(" )
             ++depth;
-        else if (tokens[index] == ")")
+        else if ( tokens[index] == ")" )
             --depth;
         ++index;
     }
     return index - 1;
 }
 
-int VnnLibInputParser::parseAssertBoth(int index,
-                                       const Vector<String> &tokens,
-                                       Vector<InputBoundInfo> &inputBounds,
-                                       NLR::OutputConstraintSet &outputConstraints)
+int VnnLibInputParser::parseAssertBoth( int index, const Vector<String> &tokens,
+                                        Vector<InputBoundInfo> &inputBounds,
+                                        NLR::OutputConstraintSet &outputConstraints )
 {
-    if ((unsigned)index >= tokens.size())
+    if ( (unsigned)index >= tokens.size() )
         return index;
 
-    if (tokens[index] == "(")
+    if ( tokens[index] == "(" )
     {
-        return parseConditionBoth(index + 1, tokens, inputBounds, outputConstraints);
+        return parseConditionBoth( index + 1, tokens, inputBounds, outputConstraints );
     }
 
     return index;
 }
 
-int VnnLibInputParser::parseConditionBoth(int index,
-                                          const Vector<String> &tokens,
-                                          Vector<InputBoundInfo> &inputBounds,
-                                          NLR::OutputConstraintSet &outputConstraints)
+int VnnLibInputParser::parseConditionBoth( int index, const Vector<String> &tokens,
+                                           Vector<InputBoundInfo> &inputBounds,
+                                           NLR::OutputConstraintSet &outputConstraints )
 {
-    if ((unsigned)index >= tokens.size())
+    if ( (unsigned)index >= tokens.size() )
         return index;
 
     const String &op = tokens[index];
 
-    if (op == "and" || op == "AND" || op == "And")
+    if ( op == "and" || op == "AND" || op == "And" )
     {
         ++index;
-        while ((unsigned)index < tokens.size() && tokens[index] != ")")
+        while ( (unsigned)index < tokens.size() && tokens[index] != ")" )
         {
-            if (tokens[index] == "(")
+            if ( tokens[index] == "(" )
             {
-                index = parseConditionBoth(index + 1, tokens, inputBounds, outputConstraints);
+                index = parseConditionBoth( index + 1, tokens, inputBounds, outputConstraints );
             }
             else
             {
@@ -1023,77 +1013,84 @@ int VnnLibInputParser::parseConditionBoth(int index,
         }
         return index + 1;
     }
-    else if (op == "or" || op == "OR" || op == "Or")
+    else if ( op == "or" || op == "OR" || op == "Or" )
     {
         int peekIndex = index + 1;
         bool hasOutputVar = false;
         int depth = 1;
-        while ((unsigned)peekIndex < tokens.size() && depth > 0)
+        while ( (unsigned)peekIndex < tokens.size() && depth > 0 )
         {
-            if (tokens[peekIndex] == "(")
+            if ( tokens[peekIndex] == "(" )
                 ++depth;
-            else if (tokens[peekIndex] == ")")
+            else if ( tokens[peekIndex] == ")" )
                 --depth;
-            else if (isOutputVariable(tokens[peekIndex]))
+            else if ( isOutputVariable( tokens[peekIndex] ) )
                 hasOutputVar = true;
             ++peekIndex;
         }
 
-        if (hasOutputVar)
+        if ( hasOutputVar )
         {
             ++index;
 
             unsigned outputDim = outputConstraints.getOutputDimension();
             Vector<Vector<NLR::OutputConstraint>> branches;
 
-            while ((unsigned)index < tokens.size() && tokens[index] != ")")
+            while ( (unsigned)index < tokens.size() && tokens[index] != ")" )
             {
-                if (tokens[index] == "(")
+                if ( tokens[index] == "(" )
                 {
                     ++index;
-                    if ((unsigned)index >= tokens.size())
+                    if ( (unsigned)index >= tokens.size() )
                         break;
 
                     const String &branchOp = tokens[index];
 
-                    if (branchOp == "and" || branchOp == "AND" || branchOp == "And")
+                    if ( branchOp == "and" || branchOp == "AND" || branchOp == "And" )
                     {
                         ++index;
                         Vector<NLR::OutputConstraint> branchConstraints;
 
-                        while ((unsigned)index < tokens.size() && tokens[index] != ")")
+                        while ( (unsigned)index < tokens.size() && tokens[index] != ")" )
                         {
-                            if (tokens[index] == "(")
+                            if ( tokens[index] == "(" )
                             {
                                 int subPeek = index + 1;
                                 bool subHasInput = false;
                                 bool subHasOutput = false;
                                 int subDepth = 1;
-                                while ((unsigned)subPeek < tokens.size() && subDepth > 0)
+                                while ( (unsigned)subPeek < tokens.size() && subDepth > 0 )
                                 {
-                                    if (tokens[subPeek] == "(") ++subDepth;
-                                    else if (tokens[subPeek] == ")") --subDepth;
-                                    else if (isInputVariable(tokens[subPeek])) subHasInput = true;
-                                    else if (isOutputVariable(tokens[subPeek])) subHasOutput = true;
+                                    if ( tokens[subPeek] == "(" )
+                                        ++subDepth;
+                                    else if ( tokens[subPeek] == ")" )
+                                        --subDepth;
+                                    else if ( isInputVariable( tokens[subPeek] ) )
+                                        subHasInput = true;
+                                    else if ( isOutputVariable( tokens[subPeek] ) )
+                                        subHasOutput = true;
                                     ++subPeek;
                                 }
 
-                                if (subHasInput && !subHasOutput)
+                                if ( subHasInput && !subHasOutput )
                                 {
-                                    index = parseCondition(index + 1, tokens, inputBounds);
+                                    index = parseCondition( index + 1, tokens, inputBounds );
                                 }
-                                else if (subHasOutput)
+                                else if ( subHasOutput )
                                 {
-                                    index = parseOutputBranch(index + 1, tokens, branchConstraints, outputDim);
+                                    index = parseOutputBranch( index + 1, tokens, branchConstraints,
+                                                               outputDim );
                                 }
                                 else
                                 {
                                     int skipDepth = 1;
                                     ++index;
-                                    while ((unsigned)index < tokens.size() && skipDepth > 0)
+                                    while ( (unsigned)index < tokens.size() && skipDepth > 0 )
                                     {
-                                        if (tokens[index] == "(") ++skipDepth;
-                                        else if (tokens[index] == ")") --skipDepth;
+                                        if ( tokens[index] == "(" )
+                                            ++skipDepth;
+                                        else if ( tokens[index] == ")" )
+                                            --skipDepth;
                                         ++index;
                                     }
                                 }
@@ -1104,20 +1101,20 @@ int VnnLibInputParser::parseConditionBoth(int index,
                             }
                         }
 
-                        if (branchConstraints.size() > 0)
+                        if ( branchConstraints.size() > 0 )
                         {
-                            branches.append(branchConstraints);
+                            branches.append( branchConstraints );
                         }
-                        if ((unsigned)index < tokens.size() && tokens[index] == ")")
+                        if ( (unsigned)index < tokens.size() && tokens[index] == ")" )
                             ++index;
                     }
                     else
                     {
                         Vector<NLR::OutputConstraint> branchConstraints;
-                        index = parseOutputBranch(index, tokens, branchConstraints, outputDim);
-                        if (branchConstraints.size() > 0)
+                        index = parseOutputBranch( index, tokens, branchConstraints, outputDim );
+                        if ( branchConstraints.size() > 0 )
                         {
-                            branches.append(branchConstraints);
+                            branches.append( branchConstraints );
                         }
                     }
                 }
@@ -1127,9 +1124,9 @@ int VnnLibInputParser::parseConditionBoth(int index,
                 }
             }
 
-            for (unsigned i = 0; i < branches.size(); ++i)
+            for ( unsigned i = 0; i < branches.size(); ++i )
             {
-                outputConstraints.addORBranch(branches[i]);
+                outputConstraints.addORBranch( branches[i] );
             }
 
             return index + 1;
@@ -1137,11 +1134,11 @@ int VnnLibInputParser::parseConditionBoth(int index,
         else
         {
             ++index;
-            while ((unsigned)index < tokens.size() && tokens[index] != ")")
+            while ( (unsigned)index < tokens.size() && tokens[index] != ")" )
             {
-                if (tokens[index] == "(")
+                if ( tokens[index] == "(" )
                 {
-                    index = parseConditionBoth(index + 1, tokens, inputBounds, outputConstraints);
+                    index = parseConditionBoth( index + 1, tokens, inputBounds, outputConstraints );
                 }
                 else
                 {
@@ -1151,73 +1148,73 @@ int VnnLibInputParser::parseConditionBoth(int index,
             return index + 1;
         }
     }
-    else if (op == "<=" || op == ">=")
+    else if ( op == "<=" || op == ">=" )
     {
         int peekIndex = index + 1;
         bool hasInputVar = false;
         bool hasOutputVar = false;
 
         int depth = 1;
-        while ((unsigned)peekIndex < tokens.size() && depth > 0)
+        while ( (unsigned)peekIndex < tokens.size() && depth > 0 )
         {
-            if (tokens[peekIndex] == "(")
+            if ( tokens[peekIndex] == "(" )
                 ++depth;
-            else if (tokens[peekIndex] == ")")
+            else if ( tokens[peekIndex] == ")" )
                 --depth;
-            else if (isInputVariable(tokens[peekIndex]))
+            else if ( isInputVariable( tokens[peekIndex] ) )
                 hasInputVar = true;
-            else if (isOutputVariable(tokens[peekIndex]))
+            else if ( isOutputVariable( tokens[peekIndex] ) )
                 hasOutputVar = true;
             ++peekIndex;
         }
 
-        if (hasInputVar && !hasOutputVar)
+        if ( hasInputVar && !hasOutputVar )
         {
-            return parseCondition(index, tokens, inputBounds);
+            return parseCondition( index, tokens, inputBounds );
         }
-        else if (hasOutputVar && !hasInputVar)
+        else if ( hasOutputVar && !hasInputVar )
         {
-            return parseOutputCondition(index, tokens, outputConstraints);
+            return parseOutputCondition( index, tokens, outputConstraints );
         }
         else
         {
             ++index;
-            while ((unsigned)index < tokens.size() && tokens[index] != ")")
+            while ( (unsigned)index < tokens.size() && tokens[index] != ")" )
                 ++index;
             return index + 1;
         }
     }
 
-    while ((unsigned)index < tokens.size() && tokens[index] != ")")
+    while ( (unsigned)index < tokens.size() && tokens[index] != ")" )
         ++index;
     return index + 1;
 }
 
 std::pair<BoundedTensor<torch::Tensor>, NLR::OutputConstraintSet>
-VnnLibInputParser::parseInputAndOutputConstraints(const String &vnnlibFilePath,
-                                                  unsigned expectedInputSize,
-                                                  unsigned expectedOutputSize)
+VnnLibInputParser::parseInputAndOutputConstraints( const String &vnnlibFilePath,
+                                                   unsigned expectedInputSize,
+                                                   unsigned expectedOutputSize )
 {
-    String content = readVnnlibFile(vnnlibFilePath);
-    Vector<String> tokens = tokenize(content);
+    String content = readVnnlibFile( vnnlibFilePath );
+    Vector<String> tokens = tokenize( content );
 
     Vector<InputBoundInfo> inputBounds;
     NLR::OutputConstraintSet outputConstraints;
-    outputConstraints.setOutputDimension(expectedOutputSize);
+    outputConstraints.setOutputDimension( expectedOutputSize );
 
-    parseTokensBoth(tokens, inputBounds, outputConstraints);
+    parseTokensBoth( tokens, inputBounds, outputConstraints );
 
-    while (inputBounds.size() < expectedInputSize)
+    while ( inputBounds.size() < expectedInputSize )
     {
-        inputBounds.append(InputBoundInfo());
+        inputBounds.append( InputBoundInfo() );
     }
 
-    torch::Tensor lowerBounds = torch::zeros({(long)expectedInputSize}, torch::kFloat64);
-    torch::Tensor upperBounds = torch::zeros({(long)expectedInputSize}, torch::kFloat64);
+    torch::Tensor lowerBounds = torch::zeros( { (long)expectedInputSize }, torch::kFloat64 );
+    torch::Tensor upperBounds = torch::zeros( { (long)expectedInputSize }, torch::kFloat64 );
 
-    for (unsigned i = 0; i < expectedInputSize; ++i)
+    for ( unsigned i = 0; i < expectedInputSize; ++i )
     {
-        if (i < inputBounds.size())
+        if ( i < inputBounds.size() )
         {
             lowerBounds[i] = inputBounds[i].lowerBound;
             upperBounds[i] = inputBounds[i].upperBound;
@@ -1229,10 +1226,10 @@ VnnLibInputParser::parseInputAndOutputConstraints(const String &vnnlibFilePath,
         }
     }
 
-    lowerBounds = lowerBounds.to(torch::kFloat32);
-    upperBounds = upperBounds.to(torch::kFloat32);
+    lowerBounds = lowerBounds.to( torch::kFloat32 );
+    upperBounds = upperBounds.to( torch::kFloat32 );
 
-    BoundedTensor<torch::Tensor> inputBoundsTensor(lowerBounds, upperBounds);
+    BoundedTensor<torch::Tensor> inputBoundsTensor( lowerBounds, upperBounds );
 
-    return std::make_pair(inputBoundsTensor, outputConstraints);
+    return std::make_pair( inputBoundsTensor, outputConstraints );
 }

@@ -104,7 +104,8 @@ void File::read( HeapData &buffer, unsigned maxReadSize )
 
 String File::readLine( char lineSeparatingChar )
 {
-    enum {
+    enum
+    {
         SIZE_OF_BUFFER = 10240,
     };
 

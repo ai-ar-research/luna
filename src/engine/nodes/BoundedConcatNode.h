@@ -15,44 +15,81 @@
 #include "BoundedTorchNode.h"
 #include <vector>
 
-namespace NLR {
+namespace NLR
+{
 
-class BoundedConcatNode : public BoundedTorchNode {
+class BoundedConcatNode : public BoundedTorchNode
+{
 public:
-    BoundedConcatNode(int axis, unsigned numInputs, const String& name = "");
+    BoundedConcatNode( int axis, unsigned numInputs, const String &name = "" );
 
-    NodeType getNodeType() const override { return NodeType::CONCAT; }
-    String getNodeName() const override { return _nodeName; }
-    unsigned getNodeIndex() const override { return _nodeIndex; }
+    NodeType getNodeType() const override
+    {
+        return NodeType::CONCAT;
+    }
+    String getNodeName() const override
+    {
+        return _nodeName;
+    }
+    unsigned getNodeIndex() const override
+    {
+        return _nodeIndex;
+    }
 
-    torch::Tensor forward(const torch::Tensor& input) override;
-    torch::Tensor forward(const std::vector<torch::Tensor>& inputs) override;
+    torch::Tensor forward( const torch::Tensor &input ) override;
+    torch::Tensor forward( const std::vector<torch::Tensor> &inputs ) override;
 
-    void boundBackward(
-        const BoundA& last_lA,
-        const BoundA& last_uA,
-        const Vector<BoundedTensor<torch::Tensor>>& inputBounds,
-        Vector<Pair<BoundA, BoundA>>& outputA_matrices,
-        torch::Tensor& lbias,
-        torch::Tensor& ubias
-    ) override;
+    void boundBackward( const BoundA &last_lA, const BoundA &last_uA,
+                        const Vector<BoundedTensor<torch::Tensor>> &inputBounds,
+                        Vector<Pair<BoundA, BoundA>> &outputA_matrices, torch::Tensor &lbias,
+                        torch::Tensor &ubias ) override;
 
     BoundedTensor<torch::Tensor> computeIntervalBoundPropagation(
-        const Vector<BoundedTensor<torch::Tensor>>& inputBounds) override;
+        const Vector<BoundedTensor<torch::Tensor>> &inputBounds ) override;
 
-    unsigned getInputSize() const override { return _input_size; }
-    unsigned getOutputSize() const override { return _output_size; }
-    bool isPerturbed() const override { return true; }
+    unsigned getInputSize() const override
+    {
+        return _input_size;
+    }
+    unsigned getOutputSize() const override
+    {
+        return _output_size;
+    }
+    bool isPerturbed() const override
+    {
+        return true;
+    }
 
-    void setInputSize(unsigned size) override { _input_size = size; }
-    void setOutputSize(unsigned size) override { _output_size = size; }
+    void setInputSize( unsigned size ) override
+    {
+        _input_size = size;
+    }
+    void setOutputSize( unsigned size ) override
+    {
+        _output_size = size;
+    }
 
-    void setNodeIndex(unsigned index) override { _nodeIndex = index; }
-    void setNodeName(const String& name) override { _nodeName = name; }
+    void setNodeIndex( unsigned index ) override
+    {
+        _nodeIndex = index;
+    }
+    void setNodeName( const String &name ) override
+    {
+        _nodeName = name;
+    }
 
-    int getAxis() const { return _axis; }
-    unsigned getNumInputs() const { return _numInputs; }
-    void setInputSizes(const std::vector<unsigned>& sizes) { _input_sizes = sizes; }
+    int getAxis() const
+    {
+        return _axis;
+    }
+    unsigned getNumInputs() const
+    {
+        return _numInputs;
+    }
+    void setInputSizes( const std::vector<unsigned> &sizes )
+    {
+        _input_sizes = sizes;
+    }
 
 private:
     int _axis;

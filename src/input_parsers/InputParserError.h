@@ -17,7 +17,8 @@
 class InputParserError : public Error
 {
 public:
-    enum Code {
+    enum Code
+    {
         VARIABLE_INDEX_OUT_OF_RANGE = 0,
         UNEXPECTED_INPUT = 1,
         FILE_DOESNT_EXIST = 2,

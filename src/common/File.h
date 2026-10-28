@@ -20,7 +20,7 @@ class HeapData;
 
 #ifdef _WIN32
 #include <io.h>
-#define S_ISDIR( mode ) ( ( (mode)&S_IFMT ) == S_IFDIR )
+#define S_ISDIR( mode ) ( ( ( mode ) & S_IFMT ) == S_IFDIR )
 
 typedef int mode_t;
 
@@ -63,7 +63,8 @@ public:
     String readLine( char lineSeparatingChar = '\n' );
 
 private:
-    enum {
+    enum
+    {
         NO_DESCRIPTOR = -1,
     };
 

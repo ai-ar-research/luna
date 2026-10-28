@@ -10,4 +10,3 @@ target_sources(${LUNA_LIB} PRIVATE
 target_include_directories(${LUNA_LIB} PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}
 )
-
