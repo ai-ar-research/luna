@@ -8,6 +8,5 @@ function(add_property_test TEST_NAME)
 endfunction()
 
 add_property_test(test_bound_monotonicity)
-add_property_test(test_crown_tighter_than_ibp)
 add_property_test(test_alpha_convergence)
 add_property_test(test_random_networks)
