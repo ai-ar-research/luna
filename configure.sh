@@ -71,14 +71,14 @@ fi
 echo "================================="
 
 cmake -B "${BUILD_DIR}" \
-    "${GENERATOR_ARGS[@]}" \
+    ${GENERATOR_ARGS[@]+"${GENERATOR_ARGS[@]}"} \
     -DCMAKE_BUILD_TYPE="${BUILD_TYPE}" \
     -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
     -DLUNA_GPU="${GPU_MODE}" \
     -DLUNA_AUTO_DOWNLOAD="${AUTO_DOWNLOAD}" \
     -DBUILD_TESTS="${BUILD_TESTS}" \
     -DBUILD_PYTHON_BINDINGS="${BUILD_PYTHON}" \
-    "${EXTRA_CMAKE_ARGS[@]}"
+    ${EXTRA_CMAKE_ARGS[@]+"${EXTRA_CMAKE_ARGS[@]}"}
 
 echo ""
 echo "Configuration complete. Next steps:"
